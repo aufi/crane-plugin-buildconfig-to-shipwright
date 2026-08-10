@@ -83,10 +83,6 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 		newResources = append(newResources, saUnstructured)
 	}
 
-	if bc.Spec.Output.PushSecret != nil && bc.Spec.Output.PushSecret.Name != "" {
-		b.Spec.Output.PushSecret = &bc.Spec.Output.PushSecret.Name
-	}
-
 	c.processSource(bc, b)
 	c.processOutput(bc, b)
 	c.addRegistries(b)
@@ -226,7 +222,7 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 		}
 		kind := string(ss.From.Kind)
 		if kind == "" {
-			return nil
+			kind = "ImageStreamTag"
 		}
 		imageRef, warning, err := resolveImageRef(kind, ss.From.Name, namespace, c.Opts)
 		if err != nil {
@@ -334,14 +330,16 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 			cloneSecret = &bc.Spec.Source.SourceSecret.Name
 		}
 
-		gitSource := &shipwrightv1beta1.Git{
+		git := &shipwrightv1beta1.Git{
 			URL:         bc.Spec.Source.Git.URI,
-			Revision:    &bc.Spec.Source.Git.Ref,
 			CloneSecret: cloneSecret,
+		}
+		if bc.Spec.Source.Git.Ref != "" {
+			git.Revision = &bc.Spec.Source.Git.Ref
 		}
 
 		source := &shipwrightv1beta1.Source{
-			Git:  gitSource,
+			Git:  git,
 			Type: shipwrightv1beta1.GitType,
 		}
 		b.Spec.Source = source
@@ -397,14 +395,14 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 		b.Spec.Source = source
 	}
 
-	if bc.Spec.Source.ContextDir != "" {
+	if b.Spec.Source != nil && bc.Spec.Source.ContextDir != "" {
 		b.Spec.Source.ContextDir = &bc.Spec.Source.ContextDir
 	}
 
-	if bc.Spec.Source.ConfigMaps != nil {
+	if b.Spec.Source != nil && bc.Spec.Source.ConfigMaps != nil {
 		c.Log.Warnf("ConfigMaps are not yet supported in Shipwright build environment. RFE: %s", ConfigMapsRFE)
 	}
-	if bc.Spec.Source.Secrets != nil {
+	if b.Spec.Source != nil && bc.Spec.Source.Secrets != nil {
 		c.Log.Warnf("Secrets are not yet supported in Shipwright build environment. RFE: %s", SecretsRFE)
 	}
 }
@@ -454,6 +452,10 @@ func (c *Converter) processOutput(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 		}
 	} else {
 		b.Spec.Output.Image = bc.Spec.Output.To.Name
+	}
+
+	if bc.Spec.Output.PushSecret != nil && bc.Spec.Output.PushSecret.Name != "" {
+		b.Spec.Output.PushSecret = &bc.Spec.Output.PushSecret.Name
 	}
 }
 

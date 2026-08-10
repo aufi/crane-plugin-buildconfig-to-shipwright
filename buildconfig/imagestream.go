@@ -18,12 +18,7 @@ func resolveImageRef(kind, name, namespace string, opts PluginOptionalFields) (s
 			return applyRegistryMapping(mapped, opts.RegistryMapping), "", nil
 		}
 
-		var streamRef string
-		if kind == "ImageStreamTag" {
-			streamRef = name
-		} else {
-			streamRef = name
-		}
+		streamRef := name
 		fallback := internalRegistryURL + "/" + namespace + "/" + streamRef
 		originalFallback := fallback
 		fallback = applyRegistryMapping(fallback, opts.RegistryMapping)
