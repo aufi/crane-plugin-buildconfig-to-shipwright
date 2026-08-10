@@ -146,3 +146,108 @@ func TestParseOptionalFields(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveImageRef(t *testing.T) {
+	tests := []struct {
+		name        string
+		kind        string
+		refName     string
+		namespace   string
+		opts        PluginOptionalFields
+		wantRef     string
+		wantWarning bool
+		wantErr     bool
+	}{
+		{
+			name:    "DockerImage returns name directly",
+			kind:    "DockerImage",
+			refName: "golang:1.21-alpine",
+			wantRef: "golang:1.21-alpine",
+		},
+		{
+			name:      "ImageStreamTag resolved via mapping",
+			kind:      "ImageStreamTag",
+			refName:   "mystream:latest",
+			namespace: "myns",
+			opts: PluginOptionalFields{
+				ImageStreamMapping: map[string]string{
+					"myns/mystream:latest": "quay.io/org/img:latest",
+				},
+			},
+			wantRef: "quay.io/org/img:latest",
+		},
+		{
+			name:        "ImageStreamTag falls back to internal registry URL",
+			kind:        "ImageStreamTag",
+			refName:     "mystream:v1",
+			namespace:   "myns",
+			wantRef:     "image-registry.openshift-image-registry.svc:5000/myns/mystream:v1",
+			wantWarning: true,
+		},
+		{
+			name:        "ImageStreamImage falls back to internal registry URL",
+			kind:        "ImageStreamImage",
+			refName:     "mystream@sha256:abc123",
+			namespace:   "myns",
+			wantRef:     "image-registry.openshift-image-registry.svc:5000/myns/mystream@sha256:abc123",
+			wantWarning: true,
+		},
+		{
+			name:      "Registry mapping applied after resolution",
+			kind:      "ImageStreamTag",
+			refName:   "mystream:latest",
+			namespace: "myns",
+			opts: PluginOptionalFields{
+				ImageStreamMapping: map[string]string{
+					"myns/mystream:latest": "old-registry.io/org/img:latest",
+				},
+				RegistryMapping: map[string]string{
+					"old-registry.io": "new-registry.io",
+				},
+			},
+			wantRef: "new-registry.io/org/img:latest",
+		},
+		{
+			name:      "Registry mapping applied on fallback URL",
+			kind:      "ImageStreamTag",
+			refName:   "mystream:v1",
+			namespace: "myns",
+			opts: PluginOptionalFields{
+				RegistryMapping: map[string]string{
+					"image-registry.openshift-image-registry.svc:5000": "quay.io",
+				},
+			},
+			wantRef: "quay.io/myns/mystream:v1",
+		},
+		{
+			name:    "unknown kind returns error",
+			kind:    "UnknownKind",
+			refName: "something",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ref, warning, err := resolveImageRef(tt.kind, tt.refName, tt.namespace, tt.opts)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ref != tt.wantRef {
+				t.Errorf("ref = %q, want %q", ref, tt.wantRef)
+			}
+			if tt.wantWarning && warning == "" {
+				t.Error("expected warning, got empty string")
+			}
+			if !tt.wantWarning && warning != "" {
+				t.Errorf("unexpected warning: %s", warning)
+			}
+		})
+	}
+}
