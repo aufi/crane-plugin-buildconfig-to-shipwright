@@ -97,17 +97,15 @@ func (p *BuildConfigTransformPlugin) Run(request transform.PluginRequest) (trans
 		Opts: opts,
 	}
 
-	_, err = converter.Convert(bc)
+	newResources, err := converter.Convert(bc)
 	if err != nil {
 		return transform.PluginResponse{}, fmt.Errorf("error converting BuildConfig %s: %w", bc.Name, err)
 	}
 
-	// For now, just whiteout the BuildConfig
-	// TODO: In later tasks, we'll generate patches to create Shipwright Build resources
 	return transform.PluginResponse{
-		Version:    string(transform.V1),
-		IsWhiteOut: true,
-		Patches:    nil,
+		Version:      string(transform.V1),
+		IsWhiteOut:   true,
+		NewResources: newResources,
 	}, nil
 }
 
