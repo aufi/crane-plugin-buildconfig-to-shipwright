@@ -1,9 +1,11 @@
 package buildconfig
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/konveyor/crane-lib/transform"
+	shipwrightv1beta1 "github.com/shipwright-io/build/pkg/apis/build/v1beta1"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -249,5 +251,388 @@ func TestResolveImageRef(t *testing.T) {
 				t.Errorf("unexpected warning: %s", warning)
 			}
 		})
+	}
+}
+
+func TestConvertDockerStrategyBasic(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "myapp-build",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri": "https://github.com/example/myapp.git",
+						"ref": "main",
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type": "Docker",
+					"dockerStrategy": map[string]interface{}{
+						"dockerfilePath": "Dockerfile.prod",
+					},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !resp.IsWhiteOut {
+		t.Error("expected IsWhiteOut to be true")
+	}
+
+	if len(resp.NewResources) < 1 {
+		t.Fatal("expected at least 1 new resource")
+	}
+
+	buildRes := resp.NewResources[0]
+	if buildRes.GetKind() != "Build" {
+		t.Errorf("expected kind Build, got %s", buildRes.GetKind())
+	}
+	if buildRes.GetAPIVersion() != "shipwright.io/v1beta1" {
+		t.Errorf("expected apiVersion shipwright.io/v1beta1, got %s", buildRes.GetAPIVersion())
+	}
+	if buildRes.GetName() != "myapp-build" {
+		t.Errorf("expected name myapp-build, got %s", buildRes.GetName())
+	}
+
+	annotations := buildRes.GetAnnotations()
+	if annotations["crane.konveyor.io/converted-from"] != "build.openshift.io/v1/BuildConfig/myapp-build" {
+		t.Errorf("missing or wrong converted-from annotation: %v", annotations)
+	}
+
+	// Verify strategy
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(buildRes.Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Strategy.Name != "buildah" {
+		t.Errorf("expected strategy name buildah, got %s", b.Spec.Strategy.Name)
+	}
+
+	// Verify dockerfile param
+	foundDockerfile := false
+	for _, pv := range b.Spec.ParamValues {
+		if pv.Name == "dockerfile" && pv.SingleValue != nil && *pv.SingleValue.Value == "Dockerfile.prod" {
+			foundDockerfile = true
+		}
+	}
+	if !foundDockerfile {
+		t.Error("expected dockerfile param with value Dockerfile.prod")
+	}
+
+	// Verify source
+	if b.Spec.Source == nil || b.Spec.Source.Type != shipwrightv1beta1.GitType {
+		t.Error("expected Git source type")
+	}
+	if b.Spec.Source.Git.URL != "https://github.com/example/myapp.git" {
+		t.Errorf("expected git URL, got %s", b.Spec.Source.Git.URL)
+	}
+
+	// Verify output
+	if b.Spec.Output.Image != "quay.io/example/myapp:latest" {
+		t.Errorf("expected output image quay.io/example/myapp:latest, got %s", b.Spec.Output.Image)
+	}
+}
+
+func TestConvertDockerStrategyAllFields(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "full-docker",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri": "https://github.com/example/myapp.git",
+						"ref": "main",
+					},
+					"contextDir": "src",
+					"sourceSecret": map[string]interface{}{
+						"name": "git-creds",
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type": "Docker",
+					"dockerStrategy": map[string]interface{}{
+						"dockerfilePath": "Dockerfile.prod",
+						"from": map[string]interface{}{
+							"kind": "DockerImage",
+							"name": "golang:1.21-alpine",
+						},
+						"noCache":   true,
+						"forcePull": true,
+						"buildArgs": []interface{}{
+							map[string]interface{}{"name": "GO_VERSION", "value": "1.21"},
+							map[string]interface{}{"name": "GOOS", "value": "linux"},
+						},
+						"imageOptimizationPolicy": "SkipLayers",
+						"env": []interface{}{
+							map[string]interface{}{"name": "GOFLAGS", "value": "-mod=vendor"},
+						},
+						"pullSecret": map[string]interface{}{
+							"name": "my-pull-secret",
+						},
+					},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+					"pushSecret": map[string]interface{}{
+						"name": "quay-push-secret",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !resp.IsWhiteOut {
+		t.Error("expected IsWhiteOut = true")
+	}
+
+	// Should have Build + ServiceAccount
+	if len(resp.NewResources) != 2 {
+		t.Fatalf("expected 2 new resources (Build + ServiceAccount), got %d", len(resp.NewResources))
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	// Check strategy
+	if b.Spec.Strategy.Name != "buildah" {
+		t.Errorf("expected strategy buildah, got %s", b.Spec.Strategy.Name)
+	}
+
+	// Check all params exist
+	paramNames := map[string]bool{}
+	for _, pv := range b.Spec.ParamValues {
+		paramNames[pv.Name] = true
+	}
+	for _, expected := range []string{"runtime-stage-from", "no-cache", "pull", "dockerfile", "build-args", "squash"} {
+		if !paramNames[expected] {
+			t.Errorf("missing param %s", expected)
+		}
+	}
+
+	// Check env
+	if len(b.Spec.Env) != 1 || b.Spec.Env[0].Name != "GOFLAGS" {
+		t.Errorf("unexpected env: %v", b.Spec.Env)
+	}
+
+	// Check source
+	if b.Spec.Source.Git.CloneSecret == nil || *b.Spec.Source.Git.CloneSecret != "git-creds" {
+		t.Error("expected cloneSecret git-creds")
+	}
+	if b.Spec.Source.ContextDir == nil || *b.Spec.Source.ContextDir != "src" {
+		t.Error("expected contextDir src")
+	}
+
+	// Check output
+	if b.Spec.Output.Image != "quay.io/example/myapp:latest" {
+		t.Errorf("unexpected output image: %s", b.Spec.Output.Image)
+	}
+	if b.Spec.Output.PushSecret == nil || *b.Spec.Output.PushSecret != "quay-push-secret" {
+		t.Error("expected pushSecret quay-push-secret")
+	}
+
+	// Check ServiceAccount
+	sa := resp.NewResources[1]
+	if sa.GetKind() != "ServiceAccount" {
+		t.Errorf("expected kind ServiceAccount, got %s", sa.GetKind())
+	}
+	if sa.GetName() != "full-docker" {
+		t.Errorf("expected SA name full-docker, got %s", sa.GetName())
+	}
+}
+
+func TestConvertDockerStrategyWithStrategyOverride(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "myapp",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri": "https://github.com/example/myapp.git",
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+		Extras: map[string]string{
+			"default-build-strategy": "docker=my-custom-buildah",
+		},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Strategy.Name != "my-custom-buildah" {
+		t.Errorf("expected strategy my-custom-buildah, got %s", b.Spec.Strategy.Name)
+	}
+}
+
+func TestConvertUnsupportedStrategy(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	tests := []struct {
+		name         string
+		strategyType string
+	}{
+		{"Custom strategy", "Custom"},
+		{"JenkinsPipeline strategy", "JenkinsPipeline"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := transform.PluginRequest{
+				Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+					"apiVersion": "build.openshift.io/v1",
+					"kind":       "BuildConfig",
+					"metadata": map[string]interface{}{
+						"name":      "myapp",
+						"namespace": "myns",
+					},
+					"spec": map[string]interface{}{
+						"source": map[string]interface{}{},
+						"strategy": map[string]interface{}{
+							"type": tt.strategyType,
+						},
+						"output": map[string]interface{}{},
+					},
+				}},
+			}
+
+			_, err := plugin.Run(request)
+			if err == nil {
+				t.Fatal("expected error for unsupported strategy")
+			}
+		})
+	}
+}
+
+func TestConvertRegistryParams(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "myapp",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+		Extras: map[string]string{
+			"search-registries":   "docker.io,quay.io",
+			"insecure-registries": "my-registry.local:5000",
+			"block-registries":    "blocked.io",
+		},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	paramsByName := map[string]shipwrightv1beta1.ParamValue{}
+	for _, pv := range b.Spec.ParamValues {
+		paramsByName[pv.Name] = pv
+	}
+
+	// Search registries
+	searchParam, ok := paramsByName["registries-search"]
+	if !ok {
+		t.Fatal("missing registries-search param")
+	}
+	if len(searchParam.Values) != 2 {
+		t.Errorf("expected 2 search registries, got %d", len(searchParam.Values))
+	}
+
+	// Insecure registries — verify the bug fix: must use insecure list, not block list
+	insecureParam, ok := paramsByName["registries-insecure"]
+	if !ok {
+		t.Fatal("missing registries-insecure param")
+	}
+	if len(insecureParam.Values) != 1 || *insecureParam.Values[0].Value != "my-registry.local:5000" {
+		t.Errorf("insecure registries should contain my-registry.local:5000, got %v", insecureParam.Values)
+	}
+
+	// Block registries
+	blockParam, ok := paramsByName["registries-block"]
+	if !ok {
+		t.Fatal("missing registries-block param")
+	}
+	if len(blockParam.Values) != 1 || *blockParam.Values[0].Value != "blocked.io" {
+		t.Errorf("block registries should contain blocked.io, got %v", blockParam.Values)
 	}
 }
