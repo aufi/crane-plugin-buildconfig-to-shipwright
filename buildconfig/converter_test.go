@@ -636,3 +636,128 @@ func TestConvertRegistryParams(t *testing.T) {
 		t.Errorf("block registries should contain blocked.io, got %v", blockParam.Values)
 	}
 }
+
+func TestConvertSourceStrategyBasic(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "s2i-app",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri": "https://github.com/example/myapp.git",
+						"ref": "main",
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type": "Source",
+					"sourceStrategy": map[string]interface{}{
+						"from": map[string]interface{}{
+							"kind": "DockerImage",
+							"name": "registry.redhat.io/ubi8/python-39:latest",
+						},
+						"env": []interface{}{
+							map[string]interface{}{"name": "APP_MODULE", "value": "myapp:app"},
+						},
+					},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !resp.IsWhiteOut {
+		t.Error("expected IsWhiteOut = true")
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Strategy.Name != "source-to-image" {
+		t.Errorf("expected strategy source-to-image, got %s", b.Spec.Strategy.Name)
+	}
+
+	// Check builder-image param
+	foundBuilder := false
+	for _, pv := range b.Spec.ParamValues {
+		if pv.Name == "builder-image" && pv.SingleValue != nil && *pv.SingleValue.Value == "registry.redhat.io/ubi8/python-39:latest" {
+			foundBuilder = true
+		}
+	}
+	if !foundBuilder {
+		t.Error("expected builder-image param")
+	}
+
+	// Check env
+	if len(b.Spec.Env) != 1 || b.Spec.Env[0].Name != "APP_MODULE" {
+		t.Errorf("unexpected env: %v", b.Spec.Env)
+	}
+}
+
+func TestConvertSourceStrategyWithS2IOverride(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "s2i-app",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+				},
+				"strategy": map[string]interface{}{
+					"type": "Source",
+					"sourceStrategy": map[string]interface{}{
+						"from": map[string]interface{}{
+							"kind": "DockerImage",
+							"name": "python:3.9",
+						},
+					},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+		Extras: map[string]string{
+			"default-build-strategy": "s2i=my-custom-s2i",
+		},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Strategy.Name != "my-custom-s2i" {
+		t.Errorf("expected strategy my-custom-s2i, got %s", b.Spec.Strategy.Name)
+	}
+}

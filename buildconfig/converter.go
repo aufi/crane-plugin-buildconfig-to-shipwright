@@ -202,9 +202,65 @@ func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwright
 	return nil
 }
 
-// processSourceStrategy is a placeholder — implemented in Task 5
 func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) error {
-	return fmt.Errorf("Source strategy not yet implemented")
+	strategyName := defaultS2IStrategy
+	if override, ok := c.Opts.StrategyMapping["s2i"]; ok && override != "" {
+		strategyName = override
+	}
+	clusterKind := shipwrightv1beta1.ClusterBuildStrategyKind
+	b.Spec.Strategy = shipwrightv1beta1.Strategy{
+		Kind: &clusterKind,
+		Name: strategyName,
+	}
+
+	ss := bc.Spec.Strategy.SourceStrategy
+	if ss == nil {
+		return nil
+	}
+
+	// From → builder-image param
+	if ss.From.Name != "" {
+		namespace := ss.From.Namespace
+		if namespace == "" {
+			namespace = bc.Namespace
+		}
+		kind := string(ss.From.Kind)
+		if kind == "" {
+			return nil
+		}
+		imageRef, warning, err := resolveImageRef(kind, ss.From.Name, namespace, c.Opts)
+		if err != nil {
+			return fmt.Errorf("error resolving Source strategy From field: %w", err)
+		}
+		if warning != "" {
+			c.Log.Warn(warning)
+		}
+		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+			Name:        "builder-image",
+			SingleValue: &shipwrightv1beta1.SingleValue{Value: &imageRef},
+		})
+	}
+
+	// Env
+	if ss.Env != nil {
+		b.Spec.Env = append(b.Spec.Env, ss.Env...)
+	}
+
+	// Warnings for unsupported features
+	if ss.Scripts != "" {
+		c.Log.Warnf("Custom scripts are not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", CustomScriptsRFE)
+	}
+	if ss.Incremental != nil && *ss.Incremental {
+		c.Log.Warnf("Incremental build is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", IncrementalBuildRFE)
+	}
+	if ss.ForcePull {
+		c.Log.Warnf("ForcePull flag is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", ForcePullFlagS2iRFE)
+	}
+	if len(ss.Volumes) > 0 {
+		c.Log.Warnf("Volumes are not yet supported in the Source-to-Image Strategy in Shipwright. RFE: %s", DockerStrategyVolumesRFE)
+	}
+
+	return nil
 }
 
 func (c *Converter) getPullSecret(bc *buildv1.BuildConfig) *corev1.LocalObjectReference {
