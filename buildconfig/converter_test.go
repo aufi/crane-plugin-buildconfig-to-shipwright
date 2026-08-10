@@ -761,3 +761,261 @@ func TestConvertSourceStrategyWithS2IOverride(t *testing.T) {
 		t.Errorf("expected strategy my-custom-s2i, got %s", b.Spec.Strategy.Name)
 	}
 }
+
+func TestConvertBinarySource(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "binary-app",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type":   "Binary",
+					"binary": map[string]interface{}{},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Source.Type != shipwrightv1beta1.LocalType {
+		t.Errorf("expected Local source type, got %s", b.Spec.Source.Type)
+	}
+	if b.Spec.Source.Local == nil || b.Spec.Source.Local.Name != "local-copy" {
+		t.Error("expected Local source with name local-copy")
+	}
+}
+
+func TestConvertImageSource(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "image-app",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Image",
+					"images": []interface{}{
+						map[string]interface{}{
+							"from": map[string]interface{}{
+								"kind": "DockerImage",
+								"name": "registry.example.com/source:latest",
+							},
+							"pullSecret": map[string]interface{}{
+								"name": "pull-secret",
+							},
+						},
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Source.Type != shipwrightv1beta1.OCIArtifactType {
+		t.Errorf("expected OCIArtifact source type, got %s", b.Spec.Source.Type)
+	}
+	if b.Spec.Source.OCIArtifact.Image != "registry.example.com/source:latest" {
+		t.Errorf("unexpected OCI image: %s", b.Spec.Source.OCIArtifact.Image)
+	}
+	if b.Spec.Source.OCIArtifact.PullSecret == nil || *b.Spec.Source.OCIArtifact.PullSecret != "pull-secret" {
+		t.Error("expected OCIArtifact pullSecret")
+	}
+}
+
+func TestConvertOutputImageStreamTag(t *testing.T) {
+	tests := []struct {
+		name      string
+		outputTo  map[string]interface{}
+		extras    map[string]string
+		wantImage string
+	}{
+		{
+			name: "ImageStreamTag with mapping",
+			outputTo: map[string]interface{}{
+				"kind": "ImageStreamTag",
+				"name": "myapp:latest",
+			},
+			extras: map[string]string{
+				"imagestream-mapping": "myns/myapp:latest=quay.io/org/myapp:latest",
+			},
+			wantImage: "quay.io/org/myapp:latest",
+		},
+		{
+			name: "ImageStreamTag fallback without tag defaults to latest",
+			outputTo: map[string]interface{}{
+				"kind": "ImageStreamTag",
+				"name": "myapp",
+			},
+			wantImage: "image-registry.openshift-image-registry.svc:5000/myns/myapp:latest",
+		},
+		{
+			name: "ImageStreamTag fallback with tag",
+			outputTo: map[string]interface{}{
+				"kind": "ImageStreamTag",
+				"name": "myapp:v2",
+			},
+			wantImage: "image-registry.openshift-image-registry.svc:5000/myns/myapp:v2",
+		},
+		{
+			name: "ImageStreamTag with registry mapping on fallback",
+			outputTo: map[string]interface{}{
+				"kind": "ImageStreamTag",
+				"name": "myapp:latest",
+			},
+			extras: map[string]string{
+				"registry-mapping": "image-registry.openshift-image-registry.svc:5000=quay.io",
+			},
+			wantImage: "quay.io/myns/myapp:latest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+			request := transform.PluginRequest{
+				Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+					"apiVersion": "build.openshift.io/v1",
+					"kind":       "BuildConfig",
+					"metadata": map[string]interface{}{
+						"name":      "myapp",
+						"namespace": "myns",
+					},
+					"spec": map[string]interface{}{
+						"source": map[string]interface{}{
+							"type": "Git",
+							"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+						},
+						"strategy": map[string]interface{}{
+							"type":           "Docker",
+							"dockerStrategy": map[string]interface{}{},
+						},
+						"output": map[string]interface{}{
+							"to": tt.outputTo,
+						},
+					},
+				}},
+				Extras: tt.extras,
+			}
+
+			resp, err := plugin.Run(request)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			b := &shipwrightv1beta1.Build{}
+			jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+			json.Unmarshal(jsonBytes, b)
+
+			if b.Spec.Output.Image != tt.wantImage {
+				t.Errorf("output image = %q, want %q", b.Spec.Output.Image, tt.wantImage)
+			}
+		})
+	}
+}
+
+func TestConvertGitProxyConfig(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	httpProxy := "http://proxy.example.com:8080"
+	httpsProxy := "https://proxy.example.com:8443"
+	noProxy := "localhost,127.0.0.1"
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "proxy-app",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri":        "https://github.com/example/myapp.git",
+						"httpProxy":  httpProxy,
+						"httpsProxy": httpsProxy,
+						"noProxy":    noProxy,
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	envByName := map[string]string{}
+	for _, env := range b.Spec.Env {
+		envByName[env.Name] = env.Value
+	}
+
+	if envByName["HTTP_PROXY"] != httpProxy {
+		t.Errorf("HTTP_PROXY = %q, want %q", envByName["HTTP_PROXY"], httpProxy)
+	}
+	if envByName["HTTPS_PROXY"] != httpsProxy {
+		t.Errorf("HTTPS_PROXY = %q, want %q", envByName["HTTPS_PROXY"], httpsProxy)
+	}
+	if envByName["NO_PROXY"] != noProxy {
+		t.Errorf("NO_PROXY = %q, want %q", envByName["NO_PROXY"], noProxy)
+	}
+}
