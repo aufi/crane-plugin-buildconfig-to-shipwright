@@ -1,0 +1,28 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: api-s2i
+  namespace: myapp
+  labels:
+    app: api
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/example/api-service.git
+      ref: release-2.0
+    contextDir: src
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: ImageStreamTag
+        name: nodejs:16-ubi8
+        namespace: openshift
+      env:
+        - name: NPM_MIRROR
+          value: https://registry.npmjs.org
+  output:
+    to:
+      kind: ImageStreamTag
+      name: api-service:latest

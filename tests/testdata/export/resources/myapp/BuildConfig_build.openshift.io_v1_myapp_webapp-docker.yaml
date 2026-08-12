@@ -1,0 +1,31 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: webapp-docker
+  namespace: myapp
+  labels:
+    app: webapp
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/example/webapp.git
+      ref: main
+    contextDir: docker
+    sourceSecret:
+      name: git-credentials
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.prod
+      buildArgs:
+        - name: GO_VERSION
+          value: "1.21"
+        - name: BASE_IMAGE
+          value: "registry.access.redhat.com/ubi8/ubi-minimal:latest"
+  output:
+    to:
+      kind: DockerImage
+      name: quay.io/example/webapp:latest
+    pushSecret:
+      name: quay-push-secret
