@@ -102,6 +102,13 @@ func (p *BuildConfigTransformPlugin) Run(request transform.PluginRequest) (trans
 		return transform.PluginResponse{}, fmt.Errorf("error converting BuildConfig %s: %w", bc.Name, err)
 	}
 
+	if len(newResources) == 0 {
+		p.log().Warnf("BuildConfig %s was not converted — passing through unchanged", bc.Name)
+		return transform.PluginResponse{
+			Version: string(transform.V1),
+		}, nil
+	}
+
 	return transform.PluginResponse{
 		Version:      string(transform.V1),
 		IsWhiteOut:   true,

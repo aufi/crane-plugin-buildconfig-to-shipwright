@@ -553,9 +553,15 @@ func TestConvertUnsupportedStrategy(t *testing.T) {
 				}},
 			}
 
-			_, err := plugin.Run(request)
-			if err == nil {
-				t.Fatal("expected error for unsupported strategy")
+			resp, err := plugin.Run(request)
+			if err != nil {
+				t.Fatalf("expected no error for unsupported strategy, got: %v", err)
+			}
+			if resp.IsWhiteOut {
+				t.Error("expected IsWhiteOut to be false for unsupported strategy")
+			}
+			if len(resp.NewResources) > 0 {
+				t.Error("expected no new resources for unsupported strategy")
 			}
 		})
 	}

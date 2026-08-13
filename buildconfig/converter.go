@@ -65,9 +65,11 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 			return nil, err
 		}
 	case buildv1.CustomBuildStrategyType:
-		return nil, fmt.Errorf("Custom build strategy is not supported for BuildConfig %s", bc.Name)
+		c.Log.Warnf("Custom build strategy is not supported for conversion — passing BuildConfig %s through unchanged", bc.Name)
+		return nil, nil
 	case buildv1.JenkinsPipelineBuildStrategyType:
-		return nil, fmt.Errorf("JenkinsPipeline build strategy is not supported for BuildConfig %s — migrate to Tekton Pipelines directly", bc.Name)
+		c.Log.Warnf("JenkinsPipeline build strategy is not supported for conversion — passing BuildConfig %s through unchanged. Consider migrating to Tekton Pipelines directly.", bc.Name)
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("unknown build strategy type %q for BuildConfig %s", bc.Spec.Strategy.Type, bc.Name)
 	}
