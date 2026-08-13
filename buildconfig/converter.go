@@ -28,7 +28,6 @@ const (
 	ConvertedFromAnnotation = "crane.konveyor.io/converted-from"
 
 	ConfigMapsRFE            = "https://issues.redhat.com/browse/BUILD-1745"
-	SecretsRFE               = "https://issues.redhat.com/browse/BUILD-1744"
 	DockerStrategyVolumesRFE = "https://issues.redhat.com/browse/BUILD-1747"
 	CustomScriptsRFE         = "https://issues.redhat.com/browse/BUILD-1641"
 	IncrementalBuildRFE      = "https://issues.redhat.com/browse/BUILD-1607"
@@ -404,8 +403,14 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 	if b.Spec.Source != nil && bc.Spec.Source.ConfigMaps != nil {
 		c.Log.Warnf("ConfigMaps are not yet supported in Shipwright build environment. RFE: %s", ConfigMapsRFE)
 	}
-	if b.Spec.Source != nil && bc.Spec.Source.Secrets != nil {
-		c.Log.Warnf("Secrets are not yet supported in Shipwright build environment. RFE: %s", SecretsRFE)
+	if b.Spec.Source != nil && len(bc.Spec.Source.Secrets) > 0 {
+		for _, secret := range bc.Spec.Source.Secrets {
+			destDir := secret.DestinationDir
+			if destDir == "" {
+				destDir = "."
+			}
+			c.Log.Warnf("BuildConfig '%s' mounts secret '%s' to '%s' during build. Shipwright uses BuildVolume to mount secrets, which requires the ClusterBuildStrategy to define an overridable volume. To migrate: (1) add an overridable volume named '%s' in the ClusterBuildStrategy, (2) add a BuildVolume override in the Build spec referencing the secret, (3) update your Dockerfile to use 'RUN cp' instead of 'ADD/COPY' for secret files.", bc.Name, secret.Secret.Name, destDir, secret.Secret.Name)
+		}
 	}
 }
 
