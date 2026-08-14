@@ -3,7 +3,7 @@ module github.com/migtools/crane-plugin-buildconfig-to-shipwright
 go 1.26.0
 
 require (
-	github.com/konveyor/crane-lib v0.1.5
+	github.com/konveyor/crane-lib v0.1.6-0.20260807130033-222a325c7cee
 	github.com/openshift/api v0.0.0-20220525145417-ee5b62754c68
 	github.com/shipwright-io/build v0.17.0
 	github.com/sirupsen/logrus v1.9.4
@@ -38,5 +38,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/konveyor/crane-lib => ../crane-lib
