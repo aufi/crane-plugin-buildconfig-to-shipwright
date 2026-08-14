@@ -2,11 +2,13 @@ package buildconfig
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/konveyor/crane-lib/transform"
 	shipwrightv1beta1 "github.com/shipwright-io/build/pkg/apis/build/v1beta1"
 	"github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -1023,5 +1025,89 @@ func TestConvertGitProxyConfig(t *testing.T) {
 	}
 	if envByName["NO_PROXY"] != noProxy {
 		t.Errorf("NO_PROXY = %q, want %q", envByName["NO_PROXY"], noProxy)
+	}
+}
+
+func TestConvertSourceSecretsWarnings(t *testing.T) {
+	logger, hook := logrustest.NewNullLogger()
+	plugin := &BuildConfigTransformPlugin{Log: logger}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "secrets-app",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri": "https://github.com/example/myapp.git",
+					},
+					"secrets": []interface{}{
+						map[string]interface{}{
+							"secret":         map[string]interface{}{"name": "npm-token"},
+							"destinationDir": "root",
+						},
+						map[string]interface{}{
+							"secret": map[string]interface{}{"name": "another-secret"},
+						},
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	_, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var secretWarnings []string
+	for _, entry := range hook.AllEntries() {
+		if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "mounts secret") {
+			secretWarnings = append(secretWarnings, entry.Message)
+		}
+	}
+
+	if len(secretWarnings) != 2 {
+		t.Fatalf("expected 2 per-secret warnings, got %d: %v", len(secretWarnings), secretWarnings)
+	}
+
+	wants := []struct {
+		name string
+		dest string
+	}{
+		{name: "npm-token", dest: "'root'"},
+		{name: "another-secret", dest: "'.'"},
+	}
+	for i, want := range wants {
+		msg := secretWarnings[i]
+		if !strings.Contains(msg, "BuildConfig 'secrets-app' mounts secret '"+want.name+"' to "+want.dest) {
+			t.Errorf("warning %d = %q, want secret %q with dest %s", i, msg, want.name, want.dest)
+		}
+		if !strings.Contains(msg, "(1) add an overridable volume named '"+want.name+"'") ||
+			!strings.Contains(msg, "(2) add a BuildVolume override") ||
+			!strings.Contains(msg, "(3) update your Dockerfile to use 'RUN cp'") {
+			t.Errorf("warning %d missing 3-step migration guidance: %q", i, msg)
+		}
+	}
+
+	// The old generic warning must be gone
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "Secrets are not yet supported") {
+			t.Errorf("old generic secrets warning still emitted: %q", entry.Message)
+		}
 	}
 }
