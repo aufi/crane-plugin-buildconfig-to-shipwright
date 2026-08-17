@@ -354,10 +354,11 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 				Timeout: &metav1.Duration{Duration: Timeout},
 			},
 		}
-		if bc.Spec.Source.Binary.AsFile != "" {
-			c.Log.Errorf("Archive source is not supported in Shipwright. BuildConfig: %s", bc.Name)
+		if bc.Spec.Source.Binary.AsFile == "" {
+			c.Log.Errorf("Binary archive source (extracted archive) is not supported in Shipwright, only single-file binary sources (asFile). BuildConfig: %s", bc.Name)
 			return
 		}
+		c.Log.Infof("Processing binary source as single file (asFile: %s). BuildConfig: %s", bc.Spec.Source.Binary.AsFile, bc.Name)
 		b.Spec.Source = source
 	} else if len(images) > 0 {
 		if len(images) > 1 {
