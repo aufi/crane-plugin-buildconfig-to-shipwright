@@ -1,0 +1,76 @@
+name: Go build and unit tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build and unit test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Verify go.mod is tidy
+        env:
+          GOPROXY: "https://proxy.golang.org"
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Build all packages
+        env:
+          GOPROXY: "https://proxy.golang.org"
+        run: go build ./...
+
+      - name: Build plugin binary
+        env:
+          GOPROXY: "https://proxy.golang.org"
+        run: go build -o crane-plugin-buildconfig-to-shipwright .
+
+      - name: Upload plugin binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: crane-plugin-buildconfig-to-shipwright
+          path: crane-plugin-buildconfig-to-shipwright
+          retention-days: 30
+
+      - name: Unit tests with coverage
+        env:
+          GOPROXY: "https://proxy.golang.org"
+        run: |
+          go test -v -coverprofile=coverage.out -covermode=atomic ./...
+          echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "<details><summary>Per-package coverage</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Coverage threshold check
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}' | sed 's/%//')
+          if [ -z "$COVERAGE" ]; then
+            echo "::error::Could not parse coverage from coverage.out"
+            exit 1
+          fi
+          echo "Total coverage: ${COVERAGE}%"
+          THRESHOLD=70
+          if awk -v cov="$COVERAGE" -v thresh="$THRESHOLD" 'BEGIN {exit !(cov < thresh)}'; then
+            echo "::error::Coverage ${COVERAGE}% is below ${THRESHOLD}% threshold"
+            exit 1
+          fi
