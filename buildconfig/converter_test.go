@@ -14,8 +14,8 @@ import (
 
 func TestRunSkipsNonBuildConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		resource   map[string]interface{}
+		name         string
+		resource     map[string]interface{}
 		wantWhiteOut bool
 	}{
 		{

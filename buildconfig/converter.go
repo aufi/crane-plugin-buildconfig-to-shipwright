@@ -520,14 +520,13 @@ func toUnstructured(obj interface{}) (unstructured.Unstructured, error) {
 // stripSerializationNoise removes fields that the typed->unstructured
 // round-trip emits even though they carry no information, so that emitted
 // resources are clean and byte-stable across runs (BUILD-2339):
-//   - metadata.creationTimestamp: null (metav1.Time has no omitempty)
-//   - empty or null status objects
+//   - empty or null status objects (zero-value Status structs marshal as {})
+//
+// Note: metadata.creationTimestamp needs no handling here. metav1.Time is
+// tagged `omitempty,omitzero` in apimachinery v0.36, so encoding/json on
+// Go >= 1.24 (this module pins go 1.26.0) omits the zero value entirely and
+// the `creationTimestamp: null` case can never reach this function.
 func stripSerializationNoise(obj map[string]interface{}) {
-	if meta, ok := obj["metadata"].(map[string]interface{}); ok {
-		if ts, present := meta["creationTimestamp"]; present && ts == nil {
-			delete(meta, "creationTimestamp")
-		}
-	}
 	if status, present := obj["status"]; present {
 		if status == nil {
 			delete(obj, "status")

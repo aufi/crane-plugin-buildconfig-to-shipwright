@@ -52,6 +52,12 @@ func applyRegistryMapping(imageRef string, registryMapping map[string]string) st
 		return keys[i] < keys[j]
 	})
 	for _, oldRegistry := range keys {
+		if oldRegistry == "" {
+			// A malformed mapping entry (e.g. "=newvalue") yields an empty
+			// key, which HasPrefix would match against every image ref.
+			// Ignore it rather than silently remapping everything.
+			continue
+		}
 		if strings.HasPrefix(imageRef, oldRegistry) {
 			return registryMapping[oldRegistry] + imageRef[len(oldRegistry):]
 		}
