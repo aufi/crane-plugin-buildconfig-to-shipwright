@@ -2,6 +2,7 @@ package buildconfig
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -961,6 +962,102 @@ func TestConvertOutputImageStreamTag(t *testing.T) {
 
 			if b.Spec.Output.Image != tt.wantImage {
 				t.Errorf("output image = %q, want %q", b.Spec.Output.Image, tt.wantImage)
+			}
+		})
+	}
+}
+
+func TestConvertOutputImageLabels(t *testing.T) {
+	tests := []struct {
+		name        string
+		imageLabels []interface{}
+		wantLabels  map[string]string
+	}{
+		{
+			name: "imageLabels mapped to output labels",
+			imageLabels: []interface{}{
+				map[string]interface{}{"name": "vendor", "value": "Acme"},
+				map[string]interface{}{"name": "io.openshift.tags", "value": "web,frontend"},
+			},
+			wantLabels: map[string]string{
+				"vendor":            "Acme",
+				"io.openshift.tags": "web,frontend",
+			},
+		},
+		{
+			name: "label with empty value is preserved",
+			imageLabels: []interface{}{
+				map[string]interface{}{"name": "empty-label"},
+			},
+			wantLabels: map[string]string{"empty-label": ""},
+		},
+		{
+			name: "duplicate label names last wins",
+			imageLabels: []interface{}{
+				map[string]interface{}{"name": "vendor", "value": "First"},
+				map[string]interface{}{"name": "vendor", "value": "Second"},
+			},
+			wantLabels: map[string]string{"vendor": "Second"},
+		},
+		{
+			name: "label with empty name is skipped",
+			imageLabels: []interface{}{
+				map[string]interface{}{"name": "", "value": "ignored"},
+			},
+			wantLabels: nil,
+		},
+		{
+			name:        "no imageLabels leaves output labels unset",
+			imageLabels: nil,
+			wantLabels:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+			output := map[string]interface{}{
+				"to": map[string]interface{}{
+					"kind": "DockerImage",
+					"name": "quay.io/org/myapp:latest",
+				},
+			}
+			if tt.imageLabels != nil {
+				output["imageLabels"] = tt.imageLabels
+			}
+			request := transform.PluginRequest{
+				Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+					"apiVersion": "build.openshift.io/v1",
+					"kind":       "BuildConfig",
+					"metadata": map[string]interface{}{
+						"name":      "myapp",
+						"namespace": "myns",
+					},
+					"spec": map[string]interface{}{
+						"source": map[string]interface{}{
+							"type": "Git",
+							"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+						},
+						"strategy": map[string]interface{}{
+							"type":           "Docker",
+							"dockerStrategy": map[string]interface{}{},
+						},
+						"output": output,
+					},
+				}},
+			}
+
+			resp, err := plugin.Run(request)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			b := &shipwrightv1beta1.Build{}
+			jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+			json.Unmarshal(jsonBytes, b)
+
+			if !reflect.DeepEqual(b.Spec.Output.Labels, tt.wantLabels) {
+				t.Errorf("output labels = %#v, want %#v", b.Spec.Output.Labels, tt.wantLabels)
 			}
 		})
 	}
