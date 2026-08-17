@@ -513,5 +513,26 @@ func toUnstructured(obj interface{}) (unstructured.Unstructured, error) {
 	if err != nil {
 		return unstructured.Unstructured{}, err
 	}
+	stripSerializationNoise(u.Object)
 	return u, nil
+}
+
+// stripSerializationNoise removes fields that the typed->unstructured
+// round-trip emits even though they carry no information, so that emitted
+// resources are clean and byte-stable across runs (BUILD-2339):
+//   - metadata.creationTimestamp: null (metav1.Time has no omitempty)
+//   - empty or null status objects
+func stripSerializationNoise(obj map[string]interface{}) {
+	if meta, ok := obj["metadata"].(map[string]interface{}); ok {
+		if ts, present := meta["creationTimestamp"]; present && ts == nil {
+			delete(meta, "creationTimestamp")
+		}
+	}
+	if status, present := obj["status"]; present {
+		if status == nil {
+			delete(obj, "status")
+		} else if m, ok := status.(map[string]interface{}); ok && len(m) == 0 {
+			delete(obj, "status")
+		}
+	}
 }

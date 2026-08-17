@@ -2,6 +2,7 @@ package buildconfig
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -36,10 +37,23 @@ func resolveImageRef(kind, name, namespace string, opts PluginOptionalFields) (s
 }
 
 func applyRegistryMapping(imageRef string, registryMapping map[string]string) string {
-	for oldRegistry, newRegistry := range registryMapping {
+	// Iterate in a deterministic order: longest prefix first (most specific
+	// mapping wins), ties broken lexically. Plain map iteration order is
+	// random in Go, which made the winner nondeterministic when multiple
+	// keys matched (BUILD-2339).
+	keys := make([]string, 0, len(registryMapping))
+	for k := range registryMapping {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) != len(keys[j]) {
+			return len(keys[i]) > len(keys[j])
+		}
+		return keys[i] < keys[j]
+	})
+	for _, oldRegistry := range keys {
 		if strings.HasPrefix(imageRef, oldRegistry) {
-			imageRef = newRegistry + imageRef[len(oldRegistry):]
-			break
+			return registryMapping[oldRegistry] + imageRef[len(oldRegistry):]
 		}
 	}
 	return imageRef
