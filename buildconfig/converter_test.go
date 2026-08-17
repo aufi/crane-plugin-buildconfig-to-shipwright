@@ -1419,3 +1419,74 @@ func TestProcessCompletionDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertNoOutputImage(t *testing.T) {
+	tests := []struct {
+		name   string
+		output map[string]interface{}
+	}{
+		{"output missing entirely", nil},
+		{"empty output", map[string]interface{}{}},
+		{"output.to with empty name", map[string]interface{}{
+			"to": map[string]interface{}{"kind": "DockerImage", "name": ""},
+		}},
+		{"pushSecret but no output.to", map[string]interface{}{
+			"pushSecret": map[string]interface{}{"name": "push-creds"},
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, hook := logrustest.NewNullLogger()
+			plugin := &BuildConfigTransformPlugin{Log: logger}
+
+			spec := map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+			}
+			if tt.output != nil {
+				spec["output"] = tt.output
+			}
+
+			request := transform.PluginRequest{
+				Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+					"apiVersion": "build.openshift.io/v1",
+					"kind":       "BuildConfig",
+					"metadata": map[string]interface{}{
+						"name":      "no-output-app",
+						"namespace": "myns",
+					},
+					"spec": spec,
+				}},
+			}
+
+			resp, err := plugin.Run(request)
+			if err != nil {
+				t.Fatalf("expected no error for BuildConfig without output image, got: %v", err)
+			}
+			if resp.IsWhiteOut {
+				t.Error("expected IsWhiteOut to be false — BuildConfig should pass through unchanged")
+			}
+			if len(resp.NewResources) > 0 {
+				t.Errorf("expected no new resources, got %d", len(resp.NewResources))
+			}
+
+			found := false
+			for _, entry := range hook.AllEntries() {
+				if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "no output image") &&
+					strings.Contains(entry.Message, "no-output-app") {
+					found = true
+				}
+			}
+			if !found {
+				t.Error("expected a warning explaining the BuildConfig has no output image")
+			}
+		})
+	}
+}
