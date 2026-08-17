@@ -38,11 +38,42 @@ const (
 type Converter struct {
 	Log  logrus.FieldLogger
 	Opts PluginOptionalFields
+
+	// assignedNames tracks generated names (keyed by kind/namespace/name) so
+	// that distinct originals resolving to the same sanitized name within a
+	// single converter lifetime are detected and disambiguated.
+	assignedNames map[string]string
+	// serviceAccounts caches generated ServiceAccounts by namespace/name so
+	// that BuildConfigs sharing a builder ServiceAccount merge their
+	// imagePullSecrets instead of overwriting each other.
+	serviceAccounts map[string]*corev1.ServiceAccount
+}
+
+// uniqueName sanitizes a generated resource name into a valid DNS-1123 label
+// and guards against two distinct original names resolving to the same final
+// name for the same kind and namespace.
+func (c *Converter) uniqueName(kind, namespace, original string) string {
+	name, changed := sanitizeDNS1123Label(original)
+	if changed {
+		c.Log.Warnf("Generated %s name %q is not a valid DNS-1123 label of at most %d characters — using %q instead", kind, original, maxGeneratedNameLength, name)
+	}
+
+	if c.assignedNames == nil {
+		c.assignedNames = map[string]string{}
+	}
+	key := kind + "/" + namespace + "/" + name
+	if owner, ok := c.assignedNames[key]; ok && owner != original {
+		name = withHashSuffix(name, original)
+		c.Log.Warnf("Generated %s name for %q collides with the name already generated for %q — using %q instead", kind, original, owner, name)
+		key = kind + "/" + namespace + "/" + name
+	}
+	c.assignedNames[key] = original
+	return name
 }
 
 func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructured, error) {
 	b := &shipwrightv1beta1.Build{}
-	b.Name = bc.Name
+	b.Name = c.uniqueName("Build", bc.Namespace, bc.Name)
 	b.Kind = "Build"
 	b.APIVersion = "shipwright.io/v1beta1"
 	b.Namespace = bc.Namespace
@@ -276,8 +307,18 @@ func (c *Converter) generateServiceAccount(bc *buildv1.BuildConfig, pullSecret *
 	if saName == "" {
 		saName = bc.Name
 	}
+	saName = c.uniqueName("ServiceAccount", bc.Namespace, saName)
 
-	return &corev1.ServiceAccount{
+	if c.serviceAccounts == nil {
+		c.serviceAccounts = map[string]*corev1.ServiceAccount{}
+	}
+	key := bc.Namespace + "/" + saName
+	if existing, ok := c.serviceAccounts[key]; ok {
+		mergePullSecret(existing, pullSecret.Name)
+		return existing
+	}
+
+	sa := &corev1.ServiceAccount{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "v1",
 			Kind:       "ServiceAccount",
@@ -292,6 +333,34 @@ func (c *Converter) generateServiceAccount(bc *buildv1.BuildConfig, pullSecret *
 		Secrets: []corev1.ObjectReference{
 			{Name: pullSecret.Name},
 		},
+	}
+	c.serviceAccounts[key] = sa
+	return sa
+}
+
+// mergePullSecret adds secretName to the ServiceAccount's imagePullSecrets and
+// secrets lists if not already present, preserving previously merged entries.
+func mergePullSecret(sa *corev1.ServiceAccount, secretName string) {
+	hasPullSecret := false
+	for _, s := range sa.ImagePullSecrets {
+		if s.Name == secretName {
+			hasPullSecret = true
+			break
+		}
+	}
+	if !hasPullSecret {
+		sa.ImagePullSecrets = append(sa.ImagePullSecrets, corev1.LocalObjectReference{Name: secretName})
+	}
+
+	hasSecret := false
+	for _, s := range sa.Secrets {
+		if s.Name == secretName {
+			hasSecret = true
+			break
+		}
+	}
+	if !hasSecret {
+		sa.Secrets = append(sa.Secrets, corev1.ObjectReference{Name: secretName})
 	}
 }
 
