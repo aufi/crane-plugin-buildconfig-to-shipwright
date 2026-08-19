@@ -548,6 +548,31 @@ func (c *Converter) processOutput(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 	if bc.Spec.Output.PushSecret != nil && bc.Spec.Output.PushSecret.Name != "" {
 		b.Spec.Output.PushSecret = &bc.Spec.Output.PushSecret.Name
 	}
+
+	c.processOutputImageLabels(bc, b)
+}
+
+// processOutputImageLabels maps BuildConfig spec.output.imageLabels to the
+// Shipwright Build spec.output.labels map, which build strategies apply to
+// the pushed image.
+func (c *Converter) processOutputImageLabels(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) {
+	if len(bc.Spec.Output.ImageLabels) == 0 {
+		return
+	}
+	labels := make(map[string]string, len(bc.Spec.Output.ImageLabels))
+	for _, il := range bc.Spec.Output.ImageLabels {
+		if il.Name == "" {
+			c.Log.Warn("Skipping output imageLabel with empty name")
+			continue
+		}
+		if existing, ok := labels[il.Name]; ok && existing != il.Value {
+			c.Log.Warnf("Duplicate output imageLabel %q: overriding value %q with %q", il.Name, existing, il.Value)
+		}
+		labels[il.Name] = il.Value
+	}
+	if len(labels) > 0 {
+		b.Spec.Output.Labels = labels
+	}
 }
 
 // maxTimeoutSeconds is the largest completionDeadlineSeconds value that can be
