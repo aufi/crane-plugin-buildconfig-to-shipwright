@@ -12,7 +12,7 @@
 #
 # Options:
 #   --cluster-name NAME    Minikube profile name (default: minikube-shipwright)
-#   --k8s-version VERSION  Kubernetes version (default: v1.31.0)
+#   --k8s-version VERSION  Kubernetes version (default: v1.34.10)
 #   --cpus N               CPU count (default: 4)
 #   --memory MB            Memory in MB (default: 8192)
 #   --driver DRIVER        Minikube driver (default: auto-detect)
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-minikube-shipwright}"
-K8S_VERSION="${K8S_VERSION:-v1.31.0}"
+K8S_VERSION="${K8S_VERSION:-v1.34.10}"
 CPUS="${CPUS:-4}"
 MEMORY="${MEMORY:-8192}"
 DRIVER="${DRIVER:-}"

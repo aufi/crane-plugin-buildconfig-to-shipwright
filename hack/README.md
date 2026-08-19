@@ -112,7 +112,7 @@ Creates a Minikube cluster with Shipwright Build for testing.
 
 **Common Options:**
 - `--cluster-name NAME` - Minikube profile name (default: `minikube-shipwright`)
-- `--k8s-version VERSION` - Kubernetes version (default: `v1.31.0`)
+- `--k8s-version VERSION` - Kubernetes version (default: `v1.34.10`, required: v1.34+ for Shipwright v0.20.11)
 - `--cpus N` - CPU count (default: `4`)
 - `--memory MB` - Memory in MB (default: `8192`)
 - `--shipwright-version VER` - Shipwright version (default: `v0.20.11`)
@@ -128,7 +128,7 @@ Creates a Minikube cluster with Shipwright Build for testing.
   --cluster-name my-cluster \
   --cpus 6 \
   --memory 16384 \
-  --k8s-version v1.30.0
+  --k8s-version v1.34.10
 
 # Only install Shipwright on existing cluster
 ./hack/setup-minikube-shipwright.sh --skip-cluster-create
