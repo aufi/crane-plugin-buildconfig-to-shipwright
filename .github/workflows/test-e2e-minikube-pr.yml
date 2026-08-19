@@ -60,9 +60,10 @@ jobs:
 
       - name: Verify Shipwright installation
         run: |
-          # Wait for Shipwright controller to be ready
-          kubectl wait --for=condition=ready pod \
-            -l control-plane=shipwright-build-controller \
+          # Verify Shipwright deployment exists and is ready
+          kubectl get deployment shipwright-build-controller -n shipwright-build
+
+          kubectl wait --for=condition=available deployment/shipwright-build-controller \
             -n shipwright-build \
             --timeout=300s
 

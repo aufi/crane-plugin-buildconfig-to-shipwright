@@ -152,12 +152,31 @@ install_shipwright() {
     log "Installing Shipwright Build $SHIPWRIGHT_VERSION"
 
     # Install Shipwright Build Controller
-    # Use server-side apply to handle large CRD annotations (Kubernetes 1.31+ issue)
+    # Use server-side apply to handle large CRD annotations (Kubernetes 1.34+ issue)
     kubectl apply --server-side -f "https://github.com/shipwright-io/build/releases/download/${SHIPWRIGHT_VERSION}/release.yaml"
 
+    log "Waiting for Shipwright namespace to be created..."
+    local retries=0
+    while ! kubectl get namespace shipwright-build &>/dev/null; do
+        sleep 2
+        retries=$((retries + 1))
+        if [ $retries -gt 30 ]; then
+            error "Timeout waiting for shipwright-build namespace"
+        fi
+    done
+
+    log "Waiting for Shipwright deployment to be created..."
+    retries=0
+    while ! kubectl get deployment shipwright-build-controller -n shipwright-build &>/dev/null; do
+        sleep 2
+        retries=$((retries + 1))
+        if [ $retries -gt 30 ]; then
+            error "Timeout waiting for shipwright-build-controller deployment"
+        fi
+    done
+
     log "Waiting for Shipwright controller to be ready..."
-    kubectl wait --for=condition=ready pod \
-        -l control-plane=shipwright-build-controller \
+    kubectl wait --for=condition=available deployment/shipwright-build-controller \
         -n shipwright-build \
         --timeout=300s
 
