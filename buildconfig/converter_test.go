@@ -787,7 +787,7 @@ func TestConvertBinarySource(t *testing.T) {
 			"spec": map[string]interface{}{
 				"source": map[string]interface{}{
 					"type":   "Binary",
-					"binary": map[string]interface{}{},
+					"binary": map[string]interface{}{"asFile": "app.jar"},
 				},
 				"strategy": map[string]interface{}{
 					"type":           "Docker",
@@ -817,6 +817,49 @@ func TestConvertBinarySource(t *testing.T) {
 	}
 	if b.Spec.Source.Local == nil || b.Spec.Source.Local.Name != "local-copy" {
 		t.Error("expected Local source with name local-copy")
+	}
+}
+
+func TestConvertBinaryArchiveSourceRejected(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "binary-archive-app",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type":   "Binary",
+					"binary": map[string]interface{}{},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Docker",
+					"dockerStrategy": map[string]interface{}{},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Source != nil && b.Spec.Source.Local != nil {
+		t.Error("expected no Local source for unsupported binary archive (asFile empty)")
 	}
 }
 
