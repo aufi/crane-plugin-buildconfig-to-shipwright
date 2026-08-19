@@ -59,7 +59,18 @@ func applyRegistryMapping(imageRef string, registryMapping map[string]string) st
 			continue
 		}
 		if strings.HasPrefix(imageRef, oldRegistry) {
-			return registryMapping[oldRegistry] + imageRef[len(oldRegistry):]
+			newRegistry := registryMapping[oldRegistry]
+			if newRegistry == "" {
+				// A malformed mapping entry (e.g. "quay.io=" or a bare
+				// "quay.io" token) yields an empty value; substituting it
+				// would produce an invalid ref like "/team/app:v1". Skip
+				// the entry and keep looking for a usable mapping.
+				continue
+			}
+			// Note: if imageRef is a bare registry with no path (already not
+			// a valid image ref), this intentionally passes it through as the
+			// bare replacement registry.
+			return newRegistry + imageRef[len(oldRegistry):]
 		}
 	}
 	return imageRef

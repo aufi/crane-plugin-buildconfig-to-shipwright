@@ -53,6 +53,29 @@ func TestApplyRegistryMappingIgnoresEmptyKey(t *testing.T) {
 	}
 }
 
+// A malformed --registry-mapping entry like "quay.io=" (or a bare "quay.io"
+// token, which crane-lib parses to an empty value) must not produce an
+// invalid ref like "/team/app:v1". The entry is skipped; a longer or other
+// valid mapping may still apply.
+func TestApplyRegistryMappingIgnoresEmptyValue(t *testing.T) {
+	mapping := map[string]string{"quay.io": ""}
+	got := applyRegistryMapping("quay.io/team/app:v1", mapping)
+	if got != "quay.io/team/app:v1" {
+		t.Fatalf("empty mapping value rewrote ref: %q", got)
+	}
+
+	// An empty-value entry must not shadow a valid shorter-prefix mapping:
+	// the longest prefix is skipped and the next candidate still applies.
+	mapping = map[string]string{
+		"quay.io/team": "",
+		"quay.io":      "new.example.com",
+	}
+	got = applyRegistryMapping("quay.io/team/app:v1", mapping)
+	if got != "new.example.com/team/app:v1" {
+		t.Fatalf("valid fallback mapping not applied: %q", got)
+	}
+}
+
 // BUILD-2339: emitted resources must not carry serialization noise.
 //   - no metadata.creationTimestamp (omitted by omitzero on metav1.Time)
 //   - no empty status object (removed by stripSerializationNoise)
