@@ -134,9 +134,10 @@ create_cluster() {
 install_tekton() {
     log "Installing Tekton Pipelines (required by Shipwright)"
 
-    local TEKTON_VERSION="${TEKTON_VERSION:-v0.67.0}"
+    # Use latest stable Tekton release
+    local TEKTON_VERSION="${TEKTON_VERSION:-latest}"
 
-    kubectl apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${TEKTON_VERSION}/release.yaml"
+    kubectl apply -f "https://storage.googleapis.com/tekton-releases/pipeline/${TEKTON_VERSION}/release.yaml"
 
     log "Waiting for Tekton to be ready..."
     kubectl wait --for=condition=ready pod \
@@ -144,7 +145,7 @@ install_tekton() {
         -n tekton-pipelines \
         --timeout=300s
 
-    log "Tekton Pipelines $TEKTON_VERSION installed"
+    log "Tekton Pipelines installed (version: $TEKTON_VERSION)"
 }
 
 install_shipwright() {

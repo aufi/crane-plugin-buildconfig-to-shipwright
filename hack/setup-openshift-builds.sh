@@ -193,12 +193,12 @@ install_shipwright_fallback() {
     log "Installing Shipwright Build as fallback..."
 
     local SHIPWRIGHT_VERSION="${SHIPWRIGHT_VERSION:-v0.20.11}"
-    local TEKTON_VERSION="${TEKTON_VERSION:-v0.67.0}"
+    local TEKTON_VERSION="${TEKTON_VERSION:-latest}"
 
     # Install Tekton if not present
     if ! oc get namespace tekton-pipelines &>/dev/null; then
-        log "Installing Tekton Pipelines $TEKTON_VERSION"
-        oc apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${TEKTON_VERSION}/release.yaml"
+        log "Installing Tekton Pipelines (version: $TEKTON_VERSION)"
+        oc apply -f "https://storage.googleapis.com/tekton-releases/pipeline/${TEKTON_VERSION}/release.yaml"
 
         log "Waiting for Tekton to be ready..."
         oc wait --for=condition=ready pod \
