@@ -238,9 +238,8 @@ func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwright
 	// Volumes — convert to Build spec volumes; full support still requires the
 	// ClusterBuildStrategy to define a matching overridable volume.
 	if len(ds.Volumes) > 0 {
-		c.Log.Warnf("Volumes were converted to Build spec volumes, but they only take effect if the Buildah ClusterBuildStrategy defines a matching overridable volume. RFE: %s", DockerStrategyVolumesRFE)
-		if err := c.processStrategyVolumes(bc, ds.Volumes, b); err != nil {
-			return err
+		if converted := c.processStrategyVolumes(bc, ds.Volumes, b); converted > 0 {
+			c.Log.Warnf("Volumes were converted to Build spec volumes, but they only take effect if the Buildah ClusterBuildStrategy defines a matching overridable volume. RFE: %s", DockerStrategyVolumesRFE)
 		}
 	}
 
@@ -304,9 +303,8 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 	// Volumes — convert to Build spec volumes; full support still requires the
 	// ClusterBuildStrategy to define a matching overridable volume.
 	if len(ss.Volumes) > 0 {
-		c.Log.Warnf("Volumes were converted to Build spec volumes, but they only take effect if the Source-to-Image ClusterBuildStrategy defines a matching overridable volume. RFE: %s", DockerStrategyVolumesRFE)
-		if err := c.processStrategyVolumes(bc, ss.Volumes, b); err != nil {
-			return err
+		if converted := c.processStrategyVolumes(bc, ss.Volumes, b); converted > 0 {
+			c.Log.Warnf("Volumes were converted to Build spec volumes, but they only take effect if the Source-to-Image ClusterBuildStrategy defines a matching overridable volume. RFE: %s", DockerStrategyVolumesRFE)
 		}
 	}
 
@@ -314,13 +312,25 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 }
 
 // processStrategyVolumes converts BuildConfig strategy volumes into Shipwright
-// Build spec volumes. Secret and ConfigMap sources are supported; volumes with
-// unsupported source types are skipped with a warning so the rest of the
-// conversion can proceed. Volume mount paths are not migrated: mount paths are
-// defined in the BuildStrategy, not in the Build resource.
-func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []buildv1.BuildVolume, b *shipwrightv1beta1.Build) error {
+// Build spec volumes and returns the number of volumes appended. Secret and
+// ConfigMap sources are supported; volumes with an empty name, a duplicate
+// name, or an unsupported source type are skipped with a warning so the rest
+// of the conversion can proceed. Volume mount paths are not migrated: mount
+// paths are defined in the BuildStrategy, not in the Build resource.
+func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []buildv1.BuildVolume, b *shipwrightv1beta1.Build) int {
+	converted := 0
+	seen := make(map[string]bool, len(volumes))
 	for _, bcVolume := range volumes {
 		c.Log.Infof("Processing volume %q for BuildConfig %s", bcVolume.Name, bc.Name)
+
+		if bcVolume.Name == "" {
+			c.Log.Warnf("Skipping volume with empty name for BuildConfig %s: the Shipwright Build API requires volumes to be named", bc.Name)
+			continue
+		}
+		if seen[bcVolume.Name] {
+			c.Log.Warnf("Skipping duplicate volume %q for BuildConfig %s: a volume with this name was already converted", bcVolume.Name, bc.Name)
+			continue
+		}
 
 		volumeSource, err := convertBuildVolumeSource(bcVolume.Source)
 		if err != nil {
@@ -328,10 +338,12 @@ func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []bu
 			continue
 		}
 
+		seen[bcVolume.Name] = true
 		b.Spec.Volumes = append(b.Spec.Volumes, shipwrightv1beta1.BuildVolume{
 			Name:         bcVolume.Name,
 			VolumeSource: volumeSource,
 		})
+		converted++
 
 		if len(bcVolume.Mounts) > 0 {
 			paths := make([]string, 0, len(bcVolume.Mounts))
@@ -341,7 +353,7 @@ func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []bu
 			c.Log.Warnf("Volume mount paths for volume %q can not be migrated to the Shipwright Build; mount paths are defined in the BuildStrategy. Original destination paths: %s", bcVolume.Name, strings.Join(paths, ", "))
 		}
 	}
-	return nil
+	return converted
 }
 
 // convertBuildVolumeSource converts an OpenShift BuildVolumeSource into the

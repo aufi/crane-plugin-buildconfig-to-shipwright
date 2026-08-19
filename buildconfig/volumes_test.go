@@ -189,6 +189,91 @@ func TestConvertStrategyVolumeMounts(t *testing.T) {
 	}
 }
 
+func TestConvertStrategyVolumesInvalidNames(t *testing.T) {
+	logger, hook := logrustest.NewNullLogger()
+	plugin := &BuildConfigTransformPlugin{Log: logger}
+	request := volumesBuildConfigRequest("Docker", "dockerStrategy", []interface{}{
+		map[string]interface{}{
+			"name":   "",
+			"source": map[string]interface{}{"type": "Secret", "secret": map[string]interface{}{"secretName": "unnamed-secret"}},
+		},
+		map[string]interface{}{
+			"name":   "dup-vol",
+			"source": map[string]interface{}{"type": "Secret", "secret": map[string]interface{}{"secretName": "first-secret"}},
+		},
+		map[string]interface{}{
+			"name":   "dup-vol",
+			"source": map[string]interface{}{"type": "ConfigMap", "configMap": map[string]interface{}{"name": "second-config"}},
+		},
+	})
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := decodeBuild(t, resp)
+
+	// Empty-name volume and the duplicate are skipped; first dup-vol wins.
+	if len(b.Spec.Volumes) != 1 {
+		t.Fatalf("expected 1 Build spec volume, got %d: %+v", len(b.Spec.Volumes), b.Spec.Volumes)
+	}
+	if b.Spec.Volumes[0].Name != "dup-vol" || b.Spec.Volumes[0].Secret == nil || b.Spec.Volumes[0].Secret.SecretName != "first-secret" {
+		t.Errorf("expected first dup-vol (secret) to win, got %+v", b.Spec.Volumes[0])
+	}
+
+	var sawEmptySkip, sawDupSkip bool
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "Skipping volume with empty name") {
+			sawEmptySkip = true
+			if entry.Level != logrus.WarnLevel {
+				t.Errorf("empty-name skip should be warn-level, got %s", entry.Level)
+			}
+		}
+		if strings.Contains(entry.Message, `Skipping duplicate volume "dup-vol"`) {
+			sawDupSkip = true
+			if entry.Level != logrus.WarnLevel {
+				t.Errorf("duplicate skip should be warn-level, got %s", entry.Level)
+			}
+		}
+	}
+	if !sawEmptySkip {
+		t.Error("expected warn-and-skip message for empty volume name")
+	}
+	if !sawDupSkip {
+		t.Error("expected warn-and-skip message for duplicate volume name")
+	}
+}
+
+func TestConvertStrategyVolumesAllSkipped(t *testing.T) {
+	logger, hook := logrustest.NewNullLogger()
+	plugin := &BuildConfigTransformPlugin{Log: logger}
+	request := volumesBuildConfigRequest("Docker", "dockerStrategy", []interface{}{
+		map[string]interface{}{
+			"name":   "csi-vol",
+			"source": map[string]interface{}{"type": "CSI", "csi": map[string]interface{}{"driver": "inline.storage.kubernetes.io"}},
+		},
+	})
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := decodeBuild(t, resp)
+	if len(b.Spec.Volumes) != 0 {
+		t.Fatalf("expected no Build spec volumes, got %+v", b.Spec.Volumes)
+	}
+
+	// When nothing was converted, the "Volumes were converted" message must
+	// not be emitted — it would falsely claim success.
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "Volumes were converted to Build spec volumes") {
+			t.Errorf("conversion-success warning emitted although no volume was converted: %q", entry.Message)
+		}
+	}
+}
+
 func TestConvertBuildVolumeSource(t *testing.T) {
 	tests := []struct {
 		name    string
