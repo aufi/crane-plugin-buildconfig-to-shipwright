@@ -562,6 +562,11 @@ func (c *Converter) processCompletionDeadline(bc *buildv1.BuildConfig, b *shipwr
 	}
 
 	seconds := *bc.Spec.CompletionDeadlineSeconds
+	if seconds <= 0 {
+		c.Log.Warnf("completionDeadlineSeconds %d on BuildConfig %s is not positive; leaving Build timeout unset",
+			seconds, bc.Name)
+		return
+	}
 	if seconds > maxTimeoutSeconds {
 		c.Log.Warnf("completionDeadlineSeconds %d on BuildConfig %s exceeds the maximum representable timeout of %d seconds; leaving Build timeout unset",
 			seconds, bc.Name, maxTimeoutSeconds)

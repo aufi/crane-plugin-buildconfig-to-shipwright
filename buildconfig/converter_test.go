@@ -17,8 +17,8 @@ import (
 
 func TestRunSkipsNonBuildConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		resource   map[string]interface{}
+		name         string
+		resource     map[string]interface{}
 		wantWhiteOut bool
 	}{
 		{
@@ -1203,6 +1203,8 @@ func TestProcessCompletionDeadline(t *testing.T) {
 	deadline := int64(1800)
 	maxDeadline := int64(maxTimeoutSeconds)
 	overflowDeadline := int64(maxTimeoutSeconds) + 1
+	zeroDeadline := int64(0)
+	negativeDeadline := int64(-30)
 
 	tests := []struct {
 		name            string
@@ -1260,6 +1262,36 @@ func TestProcessCompletionDeadline(t *testing.T) {
 				Spec: buildv1.BuildConfigSpec{
 					CommonSpec: buildv1.CommonSpec{
 						CompletionDeadlineSeconds: &overflowDeadline,
+					},
+				},
+			},
+			expectedTimeout: nil,
+		},
+		{
+			name: "completionDeadlineSeconds of zero is skipped",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					CommonSpec: buildv1.CommonSpec{
+						CompletionDeadlineSeconds: &zeroDeadline,
+					},
+				},
+			},
+			expectedTimeout: nil,
+		},
+		{
+			name: "negative completionDeadlineSeconds is skipped",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					CommonSpec: buildv1.CommonSpec{
+						CompletionDeadlineSeconds: &negativeDeadline,
 					},
 				},
 			},
