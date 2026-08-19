@@ -212,7 +212,8 @@ install_shipwright_fallback() {
     # Install Shipwright
     if ! oc get namespace shipwright-build &>/dev/null; then
         log "Installing Shipwright Build $SHIPWRIGHT_VERSION"
-        oc apply -f "https://github.com/shipwright-io/build/releases/download/${SHIPWRIGHT_VERSION}/release.yaml"
+        # Use server-side apply to handle large CRD annotations
+        oc apply --server-side -f "https://github.com/shipwright-io/build/releases/download/${SHIPWRIGHT_VERSION}/release.yaml"
 
         log "Waiting for Shipwright controller to be ready..."
         oc wait --for=condition=ready pod \
@@ -225,7 +226,8 @@ install_shipwright_fallback() {
 
     # Install build strategies
     log "Installing ClusterBuildStrategies..."
-    oc apply -f "https://github.com/shipwright-io/build/releases/download/${SHIPWRIGHT_VERSION}/sample-strategies.yaml"
+    # Use server-side apply for large CRDs
+    oc apply --server-side -f "https://github.com/shipwright-io/build/releases/download/${SHIPWRIGHT_VERSION}/sample-strategies.yaml"
 }
 
 grant_permissions() {

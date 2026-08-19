@@ -152,7 +152,8 @@ install_shipwright() {
     log "Installing Shipwright Build $SHIPWRIGHT_VERSION"
 
     # Install Shipwright Build Controller
-    kubectl apply -f "https://github.com/shipwright-io/build/releases/download/${SHIPWRIGHT_VERSION}/release.yaml"
+    # Use server-side apply to handle large CRD annotations (Kubernetes 1.31+ issue)
+    kubectl apply --server-side -f "https://github.com/shipwright-io/build/releases/download/${SHIPWRIGHT_VERSION}/release.yaml"
 
     log "Waiting for Shipwright controller to be ready..."
     kubectl wait --for=condition=ready pod \
@@ -170,7 +171,8 @@ install_build_strategies() {
     local STRATEGIES_VERSION="${SHIPWRIGHT_VERSION}"
     local STRATEGIES_BASE="https://github.com/shipwright-io/build/releases/download/${STRATEGIES_VERSION}/sample-strategies.yaml"
 
-    kubectl apply -f "$STRATEGIES_BASE"
+    # Use server-side apply for large CRDs
+    kubectl apply --server-side -f "$STRATEGIES_BASE"
 
     log "Installed ClusterBuildStrategies:"
     kubectl get clusterbuildstrategy -o custom-columns=NAME:.metadata.name --no-headers | sed 's/^/  - /'
