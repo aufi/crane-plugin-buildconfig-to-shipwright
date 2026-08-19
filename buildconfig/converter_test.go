@@ -4,18 +4,21 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/konveyor/crane-lib/transform"
+	buildv1 "github.com/openshift/api/build/v1"
 	shipwrightv1beta1 "github.com/shipwright-io/build/pkg/apis/build/v1beta1"
 	"github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestRunSkipsNonBuildConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		resource   map[string]interface{}
+		name         string
+		resource     map[string]interface{}
 		wantWhiteOut bool
 	}{
 		{
@@ -1193,5 +1196,129 @@ func TestConvertSourceConfigMapsWarnings(t *testing.T) {
 		if strings.Contains(entry.Message, "ConfigMaps are not yet supported") {
 			t.Errorf("old generic ConfigMaps warning still emitted: %q", entry.Message)
 		}
+	}
+}
+
+func TestProcessCompletionDeadline(t *testing.T) {
+	deadline := int64(1800)
+	maxDeadline := int64(maxTimeoutSeconds)
+	overflowDeadline := int64(maxTimeoutSeconds) + 1
+	zeroDeadline := int64(0)
+	negativeDeadline := int64(-30)
+
+	tests := []struct {
+		name            string
+		buildConfig     *buildv1.BuildConfig
+		expectedTimeout *metav1.Duration
+	}{
+		{
+			name: "completionDeadlineSeconds set maps to Build timeout",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					CommonSpec: buildv1.CommonSpec{
+						CompletionDeadlineSeconds: &deadline,
+					},
+				},
+			},
+			expectedTimeout: &metav1.Duration{Duration: 1800 * time.Second},
+		},
+		{
+			name: "completionDeadlineSeconds unset leaves timeout nil",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{},
+			},
+			expectedTimeout: nil,
+		},
+		{
+			name: "completionDeadlineSeconds at maximum representable value maps to Build timeout",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					CommonSpec: buildv1.CommonSpec{
+						CompletionDeadlineSeconds: &maxDeadline,
+					},
+				},
+			},
+			expectedTimeout: &metav1.Duration{Duration: time.Duration(maxTimeoutSeconds) * time.Second},
+		},
+		{
+			name: "completionDeadlineSeconds above maximum is skipped to avoid overflow",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					CommonSpec: buildv1.CommonSpec{
+						CompletionDeadlineSeconds: &overflowDeadline,
+					},
+				},
+			},
+			expectedTimeout: nil,
+		},
+		{
+			name: "completionDeadlineSeconds of zero is skipped",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					CommonSpec: buildv1.CommonSpec{
+						CompletionDeadlineSeconds: &zeroDeadline,
+					},
+				},
+			},
+			expectedTimeout: nil,
+		},
+		{
+			name: "negative completionDeadlineSeconds is skipped",
+			buildConfig: &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-bc",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					CommonSpec: buildv1.CommonSpec{
+						CompletionDeadlineSeconds: &negativeDeadline,
+					},
+				},
+			},
+			expectedTimeout: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, _ := logrustest.NewNullLogger()
+			c := &Converter{Log: logger}
+			b := &shipwrightv1beta1.Build{}
+
+			c.processCompletionDeadline(tt.buildConfig, b)
+
+			if tt.expectedTimeout == nil {
+				if b.Spec.Timeout != nil {
+					t.Errorf("Timeout = %v, want nil", b.Spec.Timeout)
+				}
+				return
+			}
+			if b.Spec.Timeout == nil {
+				t.Fatalf("Timeout = nil, want %v", tt.expectedTimeout.Duration)
+			}
+			if b.Spec.Timeout.Duration != tt.expectedTimeout.Duration {
+				t.Errorf("Timeout = %v, want %v", b.Spec.Timeout.Duration, tt.expectedTimeout.Duration)
+			}
+		})
 	}
 }
