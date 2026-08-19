@@ -66,6 +66,9 @@ func (c *Converter) uniqueName(kind, namespace, original string) string {
 		name = withHashSuffix(name, original)
 		c.Log.Warnf("Generated %s name for %q collides with the name already generated for %q — using %q instead", kind, original, owner, name)
 		key = kind + "/" + namespace + "/" + name
+		if owner, ok := c.assignedNames[key]; ok && owner != original {
+			c.Log.Errorf("Hash-suffixed %s name %q for %q still collides with the name already generated for %q — resources may overwrite each other", kind, name, original, owner)
+		}
 	}
 	c.assignedNames[key] = original
 	return name
@@ -303,6 +306,9 @@ func (c *Converter) getPullSecret(bc *buildv1.BuildConfig) *corev1.LocalObjectRe
 }
 
 func (c *Converter) generateServiceAccount(bc *buildv1.BuildConfig, pullSecret *corev1.LocalObjectReference) *corev1.ServiceAccount {
+	if pullSecret == nil {
+		return nil
+	}
 	saName := bc.Spec.ServiceAccount
 	if saName == "" {
 		saName = bc.Name
