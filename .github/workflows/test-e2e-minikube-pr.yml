@@ -30,8 +30,8 @@ jobs:
         run: |
           git clone https://github.com/konveyor/crane.git /tmp/crane
           cd /tmp/crane
-          make build
-          sudo mv bin/crane /usr/local/bin/
+          go build -o crane .
+          sudo mv crane /usr/local/bin/
           crane version
 
       - name: Setup Minikube

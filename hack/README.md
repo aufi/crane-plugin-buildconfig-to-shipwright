@@ -14,8 +14,8 @@ This directory contains scripts for setting up development and E2E testing envir
   # Build from source
   git clone https://github.com/konveyor/crane.git
   cd crane
-  make build
-  sudo mv bin/crane /usr/local/bin/
+  go build -o crane .
+  sudo mv crane /usr/local/bin/
   
   # Verify installation
   crane version

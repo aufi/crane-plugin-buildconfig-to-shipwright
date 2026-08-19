@@ -43,8 +43,8 @@ This plugin requires the [crane CLI](https://github.com/konveyor/crane) to be in
 # Build from source
 git clone https://github.com/konveyor/crane.git
 cd crane
-make build
-sudo mv bin/crane /usr/local/bin/
+go build -o crane .
+sudo mv crane /usr/local/bin/
 
 # Verify installation
 crane version
