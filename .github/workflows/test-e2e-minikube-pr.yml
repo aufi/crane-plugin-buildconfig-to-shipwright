@@ -1,0 +1,103 @@
+name: E2E Tests - Minikube
+
+on:
+  pull_request:
+    branches: ['**']
+
+jobs:
+  e2e-minikube:
+    name: E2E test on Minikube with Shipwright
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build plugin binary
+        env:
+          GOPROXY: "https://proxy.golang.org"
+        run: |
+          go build -o crane-plugin-buildconfig-to-shipwright .
+          chmod +x crane-plugin-buildconfig-to-shipwright
+
+      - name: Install crane CLI
+        run: |
+          git clone https://github.com/konveyor/crane.git /tmp/crane
+          cd /tmp/crane
+          make build
+          sudo mv bin/crane /usr/local/bin/
+          crane version
+
+      - name: Setup Minikube
+        uses: medyagh/setup-minikube@latest
+        with:
+          kubernetes-version: v1.31.0
+          cpus: 4
+          memory: 8192
+          driver: docker
+          start-args: '--addons=registry,metrics-server'
+
+      - name: Verify Minikube
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Install Tekton and Shipwright
+        run: |
+          # Set environment variables for the setup script
+          export CLUSTER_NAME=minikube
+          export SKIP_CLUSTER_CREATE=true
+
+          # Run setup script (skip cluster creation, only install components)
+          ./hack/setup-minikube-shipwright.sh --skip-cluster-create
+
+      - name: Verify Shipwright installation
+        run: |
+          # Wait for Shipwright controller to be ready
+          kubectl wait --for=condition=ready pod \
+            -l control-plane=shipwright-build-controller \
+            -n shipwright-build \
+            --timeout=300s
+
+          # List installed ClusterBuildStrategies
+          echo "Installed ClusterBuildStrategies:"
+          kubectl get clusterbuildstrategy
+
+      - name: Install fake BuildConfig CRD
+        run: |
+          # Install fake BuildConfig CRD for testing transformation
+          ./hack/fake-minikube-buildconfig.sh
+
+          # Verify installation
+          kubectl get crd buildconfigs.build.openshift.io
+
+      # TODO: Add E2E test execution here
+      # - name: Run E2E tests
+      #   run: |
+      #     # Placeholder for E2E test execution
+      #     # Example:
+      #     # ./tests/e2e-minikube.sh
+      #     # or
+      #     # go test -v ./tests/e2e/...
+      #     echo "E2E tests will be implemented here"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Minikube logs ==="
+          minikube logs || true
+
+          echo "=== Tekton controller logs ==="
+          kubectl logs -n tekton-pipelines -l app=tekton-pipelines-controller --tail=100 || true
+
+          echo "=== Shipwright controller logs ==="
+          kubectl logs -n shipwright-build -l control-plane=shipwright-build-controller --tail=100 || true
+
+          echo "=== All pods status ==="
+          kubectl get pods --all-namespaces || true

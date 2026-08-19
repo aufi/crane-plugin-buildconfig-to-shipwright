@@ -72,6 +72,35 @@ oc login --server=https://api.your-cluster.com:6443
 
 ## Script Reference
 
+### `fake-minikube-buildconfig.sh`
+
+Installs a **fake** OpenShift BuildConfig CRD on non-OpenShift clusters (like Minikube) for testing.
+
+**⚠️ Important:** This only installs the CRD definition - it does **NOT** provide actual BuildConfig functionality. BuildConfig resources created using this CRD will not trigger any builds. This is purely for testing the crane plugin's transformation capabilities.
+
+**Usage:**
+```bash
+./hack/fake-minikube-buildconfig.sh [OPTIONS]
+```
+
+**Options:**
+- `--uninstall` - Remove the BuildConfig CRD
+- `--verify` - Verify CRD installation
+
+**Examples:**
+```bash
+# Install fake BuildConfig CRD
+./hack/fake-minikube-buildconfig.sh
+
+# Verify installation
+./hack/fake-minikube-buildconfig.sh --verify
+
+# Uninstall
+./hack/fake-minikube-buildconfig.sh --uninstall
+```
+
+This allows you to create BuildConfig CR objects on Minikube (without any build functionality) and test the crane plugin transformation pipeline that converts them to Shipwright Build resources.
+
 ### `setup-minikube-shipwright.sh`
 
 Creates a Minikube cluster with Shipwright Build for testing.
