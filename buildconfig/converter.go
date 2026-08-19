@@ -235,9 +235,12 @@ func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwright
 		}
 	}
 
-	// Volumes — warning only
+	// Volumes — convert to Build spec volumes; full support still requires the
+	// ClusterBuildStrategy to define a matching overridable volume.
 	if len(ds.Volumes) > 0 {
-		c.Log.Warnf("Volumes are not yet supported in the Buildah Strategy in Shipwright. RFE: %s", DockerStrategyVolumesRFE)
+		if converted := c.processStrategyVolumes(bc, ds.Volumes, b); converted > 0 {
+			c.Log.Warnf("Volumes were converted to Build spec volumes, but they only take effect if the Buildah ClusterBuildStrategy defines a matching overridable volume. RFE: %s", DockerStrategyVolumesRFE)
+		}
 	}
 
 	return nil
@@ -297,11 +300,83 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 	if ss.ForcePull {
 		c.Log.Warnf("ForcePull flag is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", ForcePullFlagS2iRFE)
 	}
+	// Volumes — convert to Build spec volumes; full support still requires the
+	// ClusterBuildStrategy to define a matching overridable volume.
 	if len(ss.Volumes) > 0 {
-		c.Log.Warnf("Volumes are not yet supported in the Source-to-Image Strategy in Shipwright. RFE: %s", DockerStrategyVolumesRFE)
+		if converted := c.processStrategyVolumes(bc, ss.Volumes, b); converted > 0 {
+			c.Log.Warnf("Volumes were converted to Build spec volumes, but they only take effect if the Source-to-Image ClusterBuildStrategy defines a matching overridable volume. RFE: %s", DockerStrategyVolumesRFE)
+		}
 	}
 
 	return nil
+}
+
+// processStrategyVolumes converts BuildConfig strategy volumes into Shipwright
+// Build spec volumes and returns the number of volumes appended. Secret and
+// ConfigMap sources are supported; volumes with an empty name, a duplicate
+// name, or an unsupported source type are skipped with a warning so the rest
+// of the conversion can proceed. Volume mount paths are not migrated: mount
+// paths are defined in the BuildStrategy, not in the Build resource.
+func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []buildv1.BuildVolume, b *shipwrightv1beta1.Build) int {
+	converted := 0
+	seen := make(map[string]bool, len(volumes))
+	for _, bcVolume := range volumes {
+		c.Log.Infof("Processing volume %q for BuildConfig %s", bcVolume.Name, bc.Name)
+
+		if bcVolume.Name == "" {
+			c.Log.Warnf("Skipping volume with empty name for BuildConfig %s: the Shipwright Build API requires volumes to be named", bc.Name)
+			continue
+		}
+		if seen[bcVolume.Name] {
+			c.Log.Warnf("Skipping duplicate volume %q for BuildConfig %s: a volume with this name was already converted", bcVolume.Name, bc.Name)
+			continue
+		}
+
+		volumeSource, err := convertBuildVolumeSource(bcVolume.Source)
+		if err != nil {
+			c.Log.Warnf("Skipping volume %q for BuildConfig %s: %v", bcVolume.Name, bc.Name, err)
+			continue
+		}
+
+		seen[bcVolume.Name] = true
+		b.Spec.Volumes = append(b.Spec.Volumes, shipwrightv1beta1.BuildVolume{
+			Name:         bcVolume.Name,
+			VolumeSource: volumeSource,
+		})
+		converted++
+
+		if len(bcVolume.Mounts) > 0 {
+			paths := make([]string, 0, len(bcVolume.Mounts))
+			for _, m := range bcVolume.Mounts {
+				paths = append(paths, m.DestinationPath)
+			}
+			c.Log.Warnf("Volume mount paths for volume %q can not be migrated to the Shipwright Build; mount paths are defined in the BuildStrategy. Original destination paths: %s", bcVolume.Name, strings.Join(paths, ", "))
+		}
+	}
+	return converted
+}
+
+// convertBuildVolumeSource converts an OpenShift BuildVolumeSource into the
+// Kubernetes VolumeSource used by Shipwright.
+func convertBuildVolumeSource(bcSource buildv1.BuildVolumeSource) (corev1.VolumeSource, error) {
+	volumeSource := corev1.VolumeSource{}
+
+	switch bcSource.Type {
+	case buildv1.BuildVolumeSourceTypeSecret:
+		if bcSource.Secret == nil {
+			return volumeSource, fmt.Errorf("secret volume source is nil")
+		}
+		volumeSource.Secret = bcSource.Secret
+	case buildv1.BuildVolumeSourceTypeConfigMap:
+		if bcSource.ConfigMap == nil {
+			return volumeSource, fmt.Errorf("configMap volume source is nil")
+		}
+		volumeSource.ConfigMap = bcSource.ConfigMap
+	default:
+		return volumeSource, fmt.Errorf("unsupported volume source type %q; supported types are Secret and ConfigMap", bcSource.Type)
+	}
+
+	return volumeSource, nil
 }
 
 func (c *Converter) getPullSecret(bc *buildv1.BuildConfig) *corev1.LocalObjectReference {
