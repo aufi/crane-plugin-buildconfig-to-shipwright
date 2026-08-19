@@ -33,6 +33,23 @@ All other resource types are passed through unchanged.
 | `insecure-registries` | `reg1,reg2` | Insecure registries for Buildah |
 | `block-registries` | `reg1,reg2` | Blocked registries for Buildah |
 
+## Prerequisites
+
+This plugin requires the [crane CLI](https://github.com/konveyor/crane) to be installed.
+
+### Installing crane
+
+```bash
+# Build from source
+git clone https://github.com/konveyor/crane.git
+cd crane
+make build
+sudo mv bin/crane /usr/local/bin/
+
+# Verify installation
+crane version
+```
+
 ## Usage with crane
 
 ### 1. Export the namespace
