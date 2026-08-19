@@ -139,6 +139,7 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	c.processOutput(bc, b)
 	c.processCompletionDeadline(bc, b)
 	c.addRegistries(b)
+	c.processTriggers(bc, b)
 
 	if err := c.processResources(bc, b, generatedSA); err != nil {
 		return nil, err
