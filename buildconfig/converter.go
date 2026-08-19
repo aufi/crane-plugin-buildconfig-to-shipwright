@@ -109,6 +109,13 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 		return nil, fmt.Errorf("unknown build strategy type %q for BuildConfig %s", bc.Spec.Strategy.Type, bc.Name)
 	}
 
+	// Shipwright Builds require spec.output.image; a BuildConfig without an
+	// output image cannot be converted into a valid Build.
+	if bc.Spec.Output.To == nil || bc.Spec.Output.To.Name == "" {
+		c.Log.Warnf("BuildConfig %s has no output image (spec.output.to is missing or empty) — a Shipwright Build requires spec.output.image, passing BuildConfig through unchanged", bc.Name)
+		return nil, nil
+	}
+
 	// PullSecret → ServiceAccount
 	pullSecret := c.getPullSecret(bc)
 	if pullSecret != nil {
