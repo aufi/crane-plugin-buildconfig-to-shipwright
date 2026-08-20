@@ -130,6 +130,66 @@ create_namespace() {
     oc project "$NAMESPACE"
 }
 
+install_openshift_pipelines_operator() {
+    log "Checking OpenShift Pipelines Operator (required by OpenShift Builds)..."
+
+    # Check if Pipelines Operator is already installed
+    if oc get csv -n openshift-operators \
+        -o custom-columns=NAME:.metadata.name,PHASE:.status.phase \
+        --no-headers 2>/dev/null | \
+        awk '$1 ~ /^openshift-pipelines-operator/ && $2 == "Succeeded" { found = 1 } END { exit !found }'; then
+        log "OpenShift Pipelines Operator already installed"
+        return 0
+    fi
+
+    log "Installing OpenShift Pipelines Operator..."
+
+    # Create Subscription for Pipelines
+    oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator
+  namespace: openshift-operators
+spec:
+  channel: latest
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+
+    log "Waiting for OpenShift Pipelines Operator to install..."
+    local timeout=300
+    local elapsed=0
+    while [ $elapsed -lt $timeout ]; do
+        if oc get csv -n openshift-operators \
+            -o custom-columns=NAME:.metadata.name,PHASE:.status.phase \
+            --no-headers 2>/dev/null | \
+            awk '$1 ~ /^openshift-pipelines-operator/ && $2 == "Succeeded" { found = 1 } END { exit !found }'; then
+            log "OpenShift Pipelines Operator installed successfully"
+            break
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    if [ $elapsed -ge $timeout ]; then
+        error "Timeout waiting for OpenShift Pipelines Operator installation"
+    fi
+
+    # Wait for Tekton components to be ready
+    log "Waiting for Tekton Pipelines components..."
+    if oc wait --for=condition=ready pod \
+        -l app=tekton-pipelines-controller \
+        -n openshift-pipelines \
+        --timeout=300s 2>/dev/null; then
+        log "Tekton Pipelines components ready"
+    else
+        log "WARNING: Tekton Pipelines controller not ready, but continuing..."
+    fi
+}
+
 install_openshift_builds_operator() {
     if [ "$SKIP_OPERATOR_INSTALL" = true ]; then
         log "Skipping operator installation (--skip-operator-install)"
@@ -137,6 +197,9 @@ install_openshift_builds_operator() {
     fi
 
     log "Installing OpenShift Builds Operator"
+
+    # Install prerequisite: OpenShift Pipelines
+    install_openshift_pipelines_operator
 
     # Create OperatorGroup if not exists
     if ! oc get operatorgroup openshift-builds-operator -n openshift-operators &>/dev/null; then
@@ -153,9 +216,10 @@ EOF
 
     # Create Subscription
     log "Creating Subscription for OpenShift Builds Operator..."
-    local channel="stable"
+    local channel="latest"
     if [ "$OPERATOR_VERSION" != "latest" ]; then
-        channel="$OPERATOR_VERSION"
+        # Map version to channel format: 1.3 -> builds-1.3
+        channel="builds-${OPERATOR_VERSION}"
     fi
 
     oc apply -f - <<EOF
@@ -176,11 +240,14 @@ EOF
     local timeout=300
     local elapsed=0
     while [ $elapsed -lt $timeout ]; do
-        if oc get csv -n openshift-operators 2>/dev/null | grep -q openshift-builds-operator; then
-            if oc get csv -n openshift-operators -o jsonpath='{.items[?(@.metadata.name~"openshift-builds-operator")].status.phase}' 2>/dev/null | grep -q Succeeded; then
-                log "OpenShift Builds Operator installed successfully"
-                return 0
-            fi
+        # Check if CSV exists and has Succeeded phase
+        # Note: JSONPath regex (~) is not supported, use custom-columns instead
+        if oc get csv -n openshift-operators \
+            -o custom-columns=NAME:.metadata.name,PHASE:.status.phase \
+            --no-headers 2>/dev/null | \
+            awk '$1 ~ /^openshift-builds-operator/ && $2 == "Succeeded" { found = 1 } END { exit !found }'; then
+            log "OpenShift Builds Operator installed successfully"
+            return 0
         fi
         sleep 5
         elapsed=$((elapsed + 5))
@@ -193,12 +260,12 @@ install_shipwright_fallback() {
     log "Installing Shipwright Build as fallback..."
 
     local SHIPWRIGHT_VERSION="${SHIPWRIGHT_VERSION:-v0.20.11}"
-    local TEKTON_VERSION="${TEKTON_VERSION:-latest}"
+    local TEKTON_VERSION="${TEKTON_VERSION:-v1.15.0}"
 
     # Install Tekton if not present
     if ! oc get namespace tekton-pipelines &>/dev/null; then
-        log "Installing Tekton Pipelines (version: $TEKTON_VERSION)"
-        oc apply -f "https://storage.googleapis.com/tekton-releases/pipeline/${TEKTON_VERSION}/release.yaml"
+        log "Installing Tekton Pipelines $TEKTON_VERSION"
+        oc apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${TEKTON_VERSION}/release.yaml"
 
         log "Waiting for Tekton to be ready..."
         oc wait --for=condition=ready pod \

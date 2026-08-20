@@ -44,10 +44,16 @@ parse_args() {
                 shift
                 ;;
             --cluster-name)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--cluster-name requires a valid value (got: ${2:-<missing>})"
+                fi
                 CLUSTER_NAME="$2"
                 shift 2
                 ;;
             --namespace)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--namespace requires a valid value (got: ${2:-<missing>})"
+                fi
                 NAMESPACE="$2"
                 shift 2
                 ;;
@@ -101,11 +107,11 @@ cleanup_openshift() {
         return
     fi
 
-    if oc get namespace "$NAMESPACE" &>/dev/null; then
+    if oc get namespace -- "$NAMESPACE" &>/dev/null; then
         read -p "Delete namespace '$NAMESPACE' and all resources in it? (y/N): " -r
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             log "Deleting namespace..."
-            oc delete namespace "$NAMESPACE"
+            oc delete namespace -- "$NAMESPACE"
             log "Namespace deleted"
         else
             log "Skipped"

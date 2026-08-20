@@ -4,18 +4,22 @@ on:
   pull_request:
     branches: ['**']
 
+permissions:
+  contents: read
+
 jobs:
   e2e-minikube:
     name: E2E test on Minikube with Shipwright
     runs-on: ubuntu-latest
     steps:
       - name: Check out source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
@@ -30,12 +34,13 @@ jobs:
         run: |
           git clone https://github.com/konveyor/crane.git /tmp/crane
           cd /tmp/crane
+          git checkout 45826fe4367a4522bfb1557e6432eaeaf49b15f3 # v0.10.0
           go build -o crane .
           sudo mv crane /usr/local/bin/
           crane version
 
       - name: Setup Minikube
-        uses: medyagh/setup-minikube@latest
+        uses: medyagh/setup-minikube@e54c6bfce85fe75714fc113f1fa200c23338732b # latest from 2026-08-20
         with:
           kubernetes-version: v1.34.10
           cpus: '4'

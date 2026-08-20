@@ -134,10 +134,10 @@ create_cluster() {
 install_tekton() {
     log "Installing Tekton Pipelines (required by Shipwright)"
 
-    # Use latest stable Tekton release
-    local TEKTON_VERSION="${TEKTON_VERSION:-latest}"
+    # Pin to tested Tekton release (can be overridden via TEKTON_VERSION env var)
+    local TEKTON_VERSION="${TEKTON_VERSION:-v1.15.0}"
 
-    kubectl apply -f "https://storage.googleapis.com/tekton-releases/pipeline/${TEKTON_VERSION}/release.yaml"
+    kubectl apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${TEKTON_VERSION}/release.yaml"
 
     log "Waiting for Tekton to be ready..."
     kubectl wait --for=condition=ready pod \
@@ -145,7 +145,7 @@ install_tekton() {
         -n tekton-pipelines \
         --timeout=300s
 
-    log "Tekton Pipelines installed (version: $TEKTON_VERSION)"
+    log "Tekton Pipelines $TEKTON_VERSION installed"
 }
 
 install_shipwright() {
@@ -203,13 +203,23 @@ setup_local_registry() {
     # Enable minikube registry addon if not already enabled
     minikube addons enable registry -p "$CLUSTER_NAME" 2>/dev/null || true
 
-    # Get registry NodePort
-    local REGISTRY_PORT=$(kubectl get svc registry -n kube-system -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "")
-
-    if [ -n "$REGISTRY_PORT" ]; then
-        local REGISTRY_IP=$(minikube ip -p "$CLUSTER_NAME")
-        log "Local registry available at: $REGISTRY_IP:$REGISTRY_PORT"
-        log "You can use this in Build output.image field"
+    # Get registry service details
+    # Minikube registry addon creates a service on port 80 internally,
+    # accessible from within the cluster at registry.kube-system.svc.cluster.local
+    if kubectl get svc registry -n kube-system &>/dev/null; then
+        local CLUSTER_IP=$(kubectl get svc registry -n kube-system -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+        if [ -n "$CLUSTER_IP" ]; then
+            log "Registry addon enabled"
+            log "In-cluster registry: registry.kube-system.svc.cluster.local:80"
+            log ""
+            log "For Build output.image, use one of:"
+            log "  - registry.kube-system.svc.cluster.local:80/myimage:tag (in-cluster)"
+            log "  - localhost:5000/myimage:tag (requires 'minikube ssh -- -L 5000:localhost:5000')"
+        else
+            log "WARNING: Registry service found but ClusterIP unavailable"
+        fi
+    else
+        log "WARNING: Registry addon not available"
     fi
 }
 
@@ -267,7 +277,7 @@ print_summary() {
     log "      name: buildah"
     log "      kind: ClusterBuildStrategy"
     log "    output:"
-    log "      image: localhost:5000/example:latest"
+    log "      image: registry.kube-system.svc.cluster.local:80/example:latest"
     log "  EOF"
 }
 

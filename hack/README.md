@@ -65,6 +65,7 @@ oc login --server=https://api.your-cluster.com:6443
 # This creates:
 # - Namespace "my-app"
 # - Kubectl context "openshift"
+# - OpenShift Pipelines Operator (prerequisite for Builds)
 # - OpenShift Builds Operator (or Shipwright as fallback)
 # - ClusterBuildStrategies
 # - ServiceAccount with necessary permissions
