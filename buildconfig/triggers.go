@@ -66,13 +66,14 @@ func sanitizeTrigger(trigger buildv1.BuildTriggerPolicy) sanitizedTrigger {
 		s.AllowEnv = wh.AllowEnv
 	}
 	if ict := trigger.ImageChange; ict != nil {
+		// An empty imageChange block is kept, not omitted: it is the form
+		// that means "watch the build strategy's From image", which is
+		// distinct from an ImageChange trigger carrying no parameters at all.
 		ic := &sanitizedImageChange{Paused: ict.Paused}
 		if ict.From != nil {
 			ic.From = &sanitizedFrom{Kind: ict.From.Kind, Namespace: ict.From.Namespace, Name: ict.From.Name}
 		}
-		if ic.From != nil || ic.Paused {
-			s.ImageChange = ic
-		}
+		s.ImageChange = ic
 	}
 	return s
 }

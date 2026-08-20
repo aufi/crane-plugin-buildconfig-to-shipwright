@@ -389,9 +389,9 @@ func TestOriginalTriggersAnnotationPerType(t *testing.T) {
 			}},
 		},
 		{
-			name:    "image change minimal",
+			name:    "image change minimal (empty block means watch the strategy image)",
 			trigger: buildv1.BuildTriggerPolicy{Type: buildv1.ImageChangeBuildTriggerType, ImageChange: &buildv1.ImageChangeTrigger{}},
-			want:    map[string]interface{}{"type": "ImageChange"},
+			want:    map[string]interface{}{"type": "ImageChange", "imageChange": map[string]interface{}{}},
 		},
 		{
 			name:    "config change",
