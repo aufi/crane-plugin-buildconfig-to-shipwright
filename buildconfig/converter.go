@@ -48,7 +48,10 @@ type Converter struct {
 	assignedNames map[string]string
 	// serviceAccounts caches generated ServiceAccounts by namespace/name so
 	// that BuildConfigs sharing a builder ServiceAccount merge their
-	// imagePullSecrets instead of overwriting each other.
+	// imagePullSecrets instead of overwriting each other. This only spans one
+	// Converter: crane invokes the plugin once per resource in a separate
+	// process, so BuildConfigs converted by different invocations cannot be
+	// merged here — generateServiceAccount warns when that case is possible.
 	serviceAccounts map[string]*corev1.ServiceAccount
 }
 
@@ -430,6 +433,15 @@ func (c *Converter) generateServiceAccount(bc *buildv1.BuildConfig, pullSecret *
 		saName = bc.Name
 	}
 	saName = c.uniqueName("ServiceAccount", bc.Namespace, saName)
+
+	// A BuildConfig that names an existing ServiceAccount may share it with
+	// sibling BuildConfigs. crane runs this plugin once per resource in its own
+	// process, so ServiceAccounts generated for other BuildConfigs are not
+	// visible here: each conversion emits the ServiceAccount carrying only its
+	// own pull secret, and applying them in sequence keeps only the last one.
+	if bc.Spec.ServiceAccount != "" {
+		c.Log.Warnf("BuildConfig %s converts pull secret %q into ServiceAccount %q, which it may share with other BuildConfigs — pull secrets from BuildConfigs sharing this ServiceAccount are not merged, so review the generated imagePullSecrets before applying", bc.Name, pullSecret.Name, saName)
+	}
 
 	if c.serviceAccounts == nil {
 		c.serviceAccounts = map[string]*corev1.ServiceAccount{}

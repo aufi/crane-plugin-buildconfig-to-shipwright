@@ -2,6 +2,7 @@ package buildconfig
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -2058,6 +2059,75 @@ func TestConvertResourcesCustomStrategyOmitsStepResources(t *testing.T) {
 			}
 			if !foundOmitWarn {
 				t.Error("expected WARN log about omitted stepResources for custom strategy mapping")
+			}
+		})
+	}
+}
+
+// TestGenerateServiceAccountWarnsOnSharedServiceAccount covers the CodeRabbit
+// finding on BUILD-2261: crane runs this plugin once per resource in its own
+// process, so a ServiceAccount named by spec.serviceAccount and shared with
+// other BuildConfigs is emitted with only this BuildConfig's pull secret. The
+// conversion cannot merge the others, so it must warn instead of losing them
+// silently.
+func TestGenerateServiceAccountWarnsOnSharedServiceAccount(t *testing.T) {
+	tests := []struct {
+		name           string
+		serviceAccount string
+		wantSAName     string
+		wantWarn       bool
+	}{
+		{
+			name:           "shared serviceAccount warns",
+			serviceAccount: "builder",
+			wantSAName:     "builder",
+			wantWarn:       true,
+		},
+		{
+			name:       "serviceAccount derived from BuildConfig name does not warn",
+			wantSAName: "myapp",
+			wantWarn:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, hook := logrustest.NewNullLogger()
+			converter := &Converter{Log: logger}
+
+			serviceAccount := ""
+			if tt.serviceAccount != "" {
+				serviceAccount = fmt.Sprintf(`"serviceAccount": %q,`, tt.serviceAccount)
+			}
+			bc := parseBuildConfigJSON(t, fmt.Sprintf(`{
+				"apiVersion": "build.openshift.io/v1",
+				"kind": "BuildConfig",
+				"metadata": {"name": "myapp", "namespace": "myns"},
+				"spec": {
+					%s
+					"source": {"type": "Git", "git": {"uri": "https://github.com/example/myapp.git"}},
+					"strategy": {"type": "Docker", "dockerStrategy": {"pullSecret": {"name": "my-pull-secret"}}},
+					"output": {"to": {"kind": "DockerImage", "name": "quay.io/example/myapp:latest"}}
+				}
+			}`, serviceAccount))
+
+			sa := converter.generateServiceAccount(bc, converter.getPullSecret(bc))
+			if sa == nil {
+				t.Fatal("expected a generated ServiceAccount")
+			}
+			if sa.Name != tt.wantSAName {
+				t.Errorf("expected ServiceAccount name %q, got %q", tt.wantSAName, sa.Name)
+			}
+
+			gotWarn := false
+			for _, entry := range hook.AllEntries() {
+				if entry.Level == logrus.WarnLevel &&
+					strings.Contains(entry.Message, "it may share with other BuildConfigs") {
+					gotWarn = true
+				}
+			}
+			if gotWarn != tt.wantWarn {
+				t.Errorf("expected shared-ServiceAccount warning %v, got %v", tt.wantWarn, gotWarn)
 			}
 		})
 	}
