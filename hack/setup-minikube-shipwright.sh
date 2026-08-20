@@ -137,7 +137,7 @@ install_tekton() {
     # Pin to tested Tekton release (can be overridden via TEKTON_VERSION env var)
     local TEKTON_VERSION="${TEKTON_VERSION:-v1.15.0}"
 
-    kubectl apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${TEKTON_VERSION}/release.yaml"
+    kubectl apply -f "https://github.com/tektoncd/pipeline/releases/download/${TEKTON_VERSION}/release.yaml"
 
     log "Waiting for Tekton to be ready..."
     kubectl wait --for=condition=ready pod \

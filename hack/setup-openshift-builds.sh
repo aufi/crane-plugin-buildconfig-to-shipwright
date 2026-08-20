@@ -265,7 +265,7 @@ install_shipwright_fallback() {
     # Install Tekton if not present
     if ! oc get namespace tekton-pipelines &>/dev/null; then
         log "Installing Tekton Pipelines $TEKTON_VERSION"
-        oc apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${TEKTON_VERSION}/release.yaml"
+        oc apply -f "https://github.com/tektoncd/pipeline/releases/download/${TEKTON_VERSION}/release.yaml"
 
         log "Waiting for Tekton to be ready..."
         oc wait --for=condition=ready pod \
