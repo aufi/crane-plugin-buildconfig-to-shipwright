@@ -2459,3 +2459,115 @@ func TestConvertBuildArgsValueFrom(t *testing.T) {
 		})
 	}
 }
+
+// TestConvertBuildArgsWarningsAnnotationBounded verifies that the
+// conversion-warnings annotation never grows past maxConversionWarningsBytes.
+// Warning text embeds user-controlled build arg names, so an unbounded value
+// could push the Build's annotations past the Kubernetes 256 KiB total limit
+// and make the converted Build unappliable — a diagnostic must not invalidate
+// the resource it describes.
+func TestConvertBuildArgsWarningsAnnotationBounded(t *testing.T) {
+	// k8sTotalAnnotationSizeLimit mirrors apimachinery's
+	// validation.TotalAnnotationSizeLimitB (not imported to avoid a new
+	// dependency in this package).
+	const k8sTotalAnnotationSizeLimit = 256 << 10
+
+	tests := []struct {
+		name        string
+		buildArgs   []interface{}
+		wantOmitted int
+		wantKept    bool
+	}{
+		{
+			// Each invalid name produces one ~200-byte warning, so a few
+			// hundred args overflow the 32 KiB cap.
+			name: "many warnings truncated with a count of what was dropped",
+			buildArgs: func() []interface{} {
+				args := make([]interface{}, 0, 400)
+				for i := 0; i < 400; i++ {
+					args = append(args, map[string]interface{}{
+						"name":  fmt.Sprintf("BAD NAME %04d", i),
+						"value": "v",
+					})
+				}
+				return args
+			}(),
+			wantKept: true,
+		},
+		{
+			// A single arg whose name alone exceeds the cap: nothing fits, so
+			// the annotation carries only the omitted-count line.
+			name: "single oversized warning leaves only the notice",
+			buildArgs: []interface{}{
+				map[string]interface{}{"name": "BAD " + strings.Repeat("x", 200<<10), "value": "v"},
+			},
+			wantOmitted: 1,
+			wantKept:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, hook := logrustest.NewNullLogger()
+			plugin := &BuildConfigTransformPlugin{Log: logger}
+
+			resp, err := plugin.Run(buildArgsRequest(tt.buildArgs))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var b *shipwrightv1beta1.Build
+			for _, r := range resp.NewResources {
+				if r.GetKind() == "Build" {
+					b = &shipwrightv1beta1.Build{}
+					jsonBytes, _ := json.Marshal(r.Object)
+					if err := json.Unmarshal(jsonBytes, b); err != nil {
+						t.Fatalf("unmarshal Build: %v", err)
+					}
+				}
+			}
+			if b == nil {
+				t.Fatal("no Build resource produced")
+			}
+
+			ann := b.Annotations[ConversionWarningsAnnotation]
+			if len(ann) > maxConversionWarningsBytes {
+				t.Errorf("annotation %s is %d bytes, over the %d byte cap", ConversionWarningsAnnotation, len(ann), maxConversionWarningsBytes)
+			}
+
+			// The whole point of the cap: the Build stays appliable.
+			total := 0
+			for k, v := range b.Annotations {
+				total += len(k) + len(v)
+			}
+			if total > k8sTotalAnnotationSizeLimit {
+				t.Errorf("total annotations are %d bytes, over the Kubernetes limit of %d", total, k8sTotalAnnotationSizeLimit)
+			}
+
+			// A truncated annotation must say so, and say how much is missing.
+			if !strings.Contains(ann, "conversion warning(s) omitted") {
+				t.Errorf("expected a truncation notice in %s; got:\n%s", ConversionWarningsAnnotation, ann)
+			}
+			if tt.wantOmitted > 0 && !strings.Contains(ann, omittedWarningsNotice(tt.wantOmitted)) {
+				t.Errorf("expected notice for %d omitted warnings; got:\n%s", tt.wantOmitted, ann)
+			}
+			if tt.wantKept && !strings.Contains(ann, "was skipped") {
+				t.Errorf("expected the annotation to keep some whole warnings; got:\n%s", ann)
+			}
+			if !tt.wantKept && ann != omittedWarningsNotice(tt.wantOmitted) {
+				t.Errorf("expected the annotation to be only the notice; got:\n%s", ann)
+			}
+
+			// Truncation is annotation-only: every warning still reaches the log.
+			logged := 0
+			for _, e := range hook.AllEntries() {
+				if strings.Contains(e.Message, "was skipped") {
+					logged++
+				}
+			}
+			if logged != len(tt.buildArgs) {
+				t.Errorf("expected all %d warnings in the log, got %d", len(tt.buildArgs), logged)
+			}
+		})
+	}
+}

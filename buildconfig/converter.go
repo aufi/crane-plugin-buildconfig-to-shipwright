@@ -31,8 +31,17 @@ const (
 
 	ConvertedFromAnnotation      = "crane.konveyor.io/converted-from"
 	ConversionWarningsAnnotation = "crane.konveyor.io/conversion-warnings"
-	BuildRunTemplateAnnotation   = "buildconfig-to-shipwright/buildrun-template"
-	OriginalTriggersAnnotation   = "buildconfig-to-shipwright/original-triggers"
+
+	// maxConversionWarningsBytes caps the ConversionWarningsAnnotation value.
+	// Kubernetes rejects an object whose annotations total more than 256 KiB
+	// (apimachinery TotalAnnotationSizeLimitB), and warning text embeds
+	// user-controlled build arg names, so an unbounded value could make the
+	// converted Build unappliable. 32 KiB holds well over a hundred warnings
+	// and leaves the rest of the budget to BuildRunTemplateAnnotation and
+	// OriginalTriggersAnnotation. Warnings are always logged in full.
+	maxConversionWarningsBytes = 32 << 10
+	BuildRunTemplateAnnotation = "buildconfig-to-shipwright/buildrun-template"
+	OriginalTriggersAnnotation = "buildconfig-to-shipwright/original-triggers"
 
 	ConfigMapsRFE = "https://issues.redhat.com/browse/BUILD-1745"
 	SecretsRFE    = "https://issues.redhat.com/browse/BUILD-1744"
@@ -206,6 +215,50 @@ func validBuildArgName(name string) bool {
 	return true
 }
 
+// boundedWarnings joins warnings for ConversionWarningsAnnotation, keeping the
+// value under maxConversionWarningsBytes. Only whole warnings are kept; when
+// any are dropped a final line records how many, so a truncated annotation is
+// never mistaken for the complete set. The full list is always in the logs.
+func (c *Converter) boundedWarnings(warnings []string) string {
+	joined := strings.Join(warnings, "\n")
+	if len(joined) <= maxConversionWarningsBytes {
+		return joined
+	}
+
+	// Reserve room for the omitted-count line up front. Its length grows with
+	// the count, so budget for the worst case: every warning omitted.
+	reserved := len(omittedWarningsNotice(len(warnings))) + 1 // +1 for its newline
+
+	var b strings.Builder
+	kept := 0
+	for _, w := range warnings {
+		needed := len(w)
+		if kept > 0 {
+			needed++ // separator newline
+		}
+		if b.Len()+needed+reserved > maxConversionWarningsBytes {
+			break
+		}
+		if kept > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(w)
+		kept++
+	}
+
+	if kept > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString(omittedWarningsNotice(len(warnings) - kept))
+	c.Log.Warnf("Conversion warnings exceeded %d bytes — %d of %d warnings were omitted from annotation %s; the full list is in the warnings logged above.", maxConversionWarningsBytes, len(warnings)-kept, len(warnings), ConversionWarningsAnnotation)
+	return b.String()
+}
+
+// omittedWarningsNotice is the trailing line of a truncated warnings annotation.
+func omittedWarningsNotice(omitted int) string {
+	return fmt.Sprintf("... %d more conversion warning(s) omitted to stay within the Kubernetes annotation size limit — see the crane plugin logs for the full list.", omitted)
+}
+
 func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) error {
 	strategyName := defaultDockerStrategy
 	if override, ok := c.Opts.StrategyMapping["docker"]; ok && override != "" {
@@ -347,7 +400,7 @@ func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwright
 			if b.Annotations == nil {
 				b.Annotations = map[string]string{}
 			}
-			b.Annotations[ConversionWarningsAnnotation] = strings.Join(warnings, "\n")
+			b.Annotations[ConversionWarningsAnnotation] = c.boundedWarnings(warnings)
 		}
 		c.Log.Infof("Processed %d build args: %d literal, %d mapped to ConfigMap/Secret refs, %d skipped for BuildConfig %s", len(ds.BuildArgs), literal, mapped, skipped, bc.Name)
 	}
