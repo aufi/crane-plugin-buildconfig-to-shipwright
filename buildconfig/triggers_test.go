@@ -76,6 +76,7 @@ func TestProcessTriggersWebhookTypes(t *testing.T) {
 				tc.canonicalName+" webhook trigger is dropped",
 				"my-app",
 				"no replacement URL",
+				"Remove or repoint the webhook in your Git provider",
 				"Pipelines-as-Code",
 				"Tekton Triggers",
 			)

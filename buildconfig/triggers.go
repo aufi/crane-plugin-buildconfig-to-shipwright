@@ -84,7 +84,7 @@ func (c *Converter) processTriggers(bc *buildv1.BuildConfig, b *shipwrightv1beta
 
 // webhookTriggerWarning is shared by all webhook trigger types; it takes the
 // BuildConfig name and the canonical trigger type.
-const webhookTriggerWarning = "BuildConfig %s: %s webhook trigger is dropped — the old OpenShift webhook URL will stop working after migration, and Shipwright provides no replacement URL. Set up Pipelines-as-Code or Tekton Triggers to create BuildRuns on push events."
+const webhookTriggerWarning = "BuildConfig %s: %s webhook trigger is dropped — the old OpenShift webhook URL will stop working after migration, and Shipwright provides no replacement URL. Remove or repoint the webhook in your Git provider, then set up Pipelines-as-Code or Tekton Triggers to create BuildRuns on push events."
 
 // imageChangeWatchedRef names what an ImageChange trigger was watching: the
 // referenced ImageStreamTag, or the build strategy's From image when the
