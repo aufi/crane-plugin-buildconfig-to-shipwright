@@ -2,6 +2,7 @@ package buildconfig
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	logrustest "github.com/sirupsen/logrus/hooks/test"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 )
 
 func TestRunSkipsNonBuildConfig(t *testing.T) {
@@ -1669,5 +1671,464 @@ func TestConvertMetadataLabelsAbsent(t *testing.T) {
 	metadata, _ := resp.NewResources[0].Object["metadata"].(map[string]interface{})
 	if _, exists := metadata["labels"]; exists {
 		t.Errorf("expected no labels key in metadata when all labels are filtered, got %v", metadata["labels"])
+	}
+}
+
+// unmarshalBuildRunTemplate decodes the BuildRun template annotation
+// (BUILD-2261) into the real Shipwright type so the assertions round-trip
+// through the same API the target cluster will use.
+func unmarshalBuildRunTemplate(t *testing.T, value string) shipwrightv1beta1.BuildRun {
+	t.Helper()
+	tmpl := shipwrightv1beta1.BuildRun{}
+	if err := yaml.Unmarshal([]byte(value), &tmpl); err != nil {
+		t.Fatalf("annotation value is not a valid BuildRun: %v\n%s", err, value)
+	}
+	return tmpl
+}
+
+func runBuildRunTemplateConversion(t *testing.T, spec map[string]interface{}) map[string]string {
+	t.Helper()
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "myapp",
+				"namespace": "myns",
+			},
+			"spec": spec,
+		}},
+	}
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.NewResources) < 1 {
+		t.Fatal("expected at least 1 new resource")
+	}
+	return resp.NewResources[0].GetAnnotations()
+}
+
+func TestConvertResourcesDockerStrategy(t *testing.T) {
+	annotations := runBuildRunTemplateConversion(t, map[string]interface{}{
+		"source": map[string]interface{}{
+			"type": "Git",
+			"git":  map[string]interface{}{"uri": "https://github.com/example/myapp.git"},
+		},
+		"strategy": map[string]interface{}{
+			"type":           "Docker",
+			"dockerStrategy": map[string]interface{}{},
+		},
+		"output": map[string]interface{}{
+			"to": map[string]interface{}{"kind": "DockerImage", "name": "quay.io/example/myapp:latest"},
+		},
+		"resources": map[string]interface{}{
+			"requests": map[string]interface{}{"cpu": "500m", "memory": "1Gi"},
+			"limits":   map[string]interface{}{"cpu": "2", "memory": "4Gi"},
+		},
+	})
+
+	value, ok := annotations[BuildRunTemplateAnnotation]
+	if !ok {
+		t.Fatalf("expected annotation %s, got: %v", BuildRunTemplateAnnotation, annotations)
+	}
+
+	tmpl := unmarshalBuildRunTemplate(t, value)
+
+	if tmpl.APIVersion != "shipwright.io/v1beta1" {
+		t.Errorf("expected apiVersion shipwright.io/v1beta1, got %s", tmpl.APIVersion)
+	}
+	if tmpl.Kind != "BuildRun" {
+		t.Errorf("expected kind BuildRun, got %s", tmpl.Kind)
+	}
+	if tmpl.Name != "myapp-buildrun" {
+		t.Errorf("expected metadata.name myapp-buildrun, got %s", tmpl.Name)
+	}
+	if tmpl.Namespace != "myns" {
+		t.Errorf("expected metadata.namespace myns, got %s", tmpl.Namespace)
+	}
+	if tmpl.Spec.Build.Name == nil || *tmpl.Spec.Build.Name != "myapp" {
+		t.Errorf("expected spec.build.name myapp, got %v", tmpl.Spec.Build.Name)
+	}
+	if tmpl.Spec.ServiceAccount != nil {
+		t.Errorf("expected no serviceAccount, got %s", *tmpl.Spec.ServiceAccount)
+	}
+	if len(tmpl.Spec.StepResources) != 1 {
+		t.Fatalf("expected 1 stepResources entry, got %d", len(tmpl.Spec.StepResources))
+	}
+	step := tmpl.Spec.StepResources[0]
+	if step.Name != "build-and-push" {
+		t.Errorf("expected step name build-and-push, got %s", step.Name)
+	}
+	if step.Resources.Requests.Cpu().String() != "500m" || step.Resources.Requests.Memory().String() != "1Gi" {
+		t.Errorf("unexpected requests: %v", step.Resources.Requests)
+	}
+	if step.Resources.Limits.Cpu().String() != "2" || step.Resources.Limits.Memory().String() != "4Gi" {
+		t.Errorf("unexpected limits: %v", step.Resources.Limits)
+	}
+}
+
+func TestConvertResourcesSourceStrategyWithServiceAccount(t *testing.T) {
+	annotations := runBuildRunTemplateConversion(t, map[string]interface{}{
+		"source": map[string]interface{}{
+			"type": "Git",
+			"git":  map[string]interface{}{"uri": "https://github.com/example/myapp.git"},
+		},
+		"strategy": map[string]interface{}{
+			"type": "Source",
+			"sourceStrategy": map[string]interface{}{
+				"from": map[string]interface{}{
+					"kind": "DockerImage",
+					"name": "registry.example.com/builder:latest",
+				},
+				"pullSecret": map[string]interface{}{"name": "my-pull-secret"},
+			},
+		},
+		"output": map[string]interface{}{
+			"to": map[string]interface{}{"kind": "DockerImage", "name": "quay.io/example/myapp:latest"},
+		},
+		"resources": map[string]interface{}{
+			"limits": map[string]interface{}{"memory": "2Gi"},
+		},
+	})
+
+	value, ok := annotations[BuildRunTemplateAnnotation]
+	if !ok {
+		t.Fatalf("expected annotation %s, got: %v", BuildRunTemplateAnnotation, annotations)
+	}
+
+	tmpl := unmarshalBuildRunTemplate(t, value)
+
+	// Generated ServiceAccount (pull-secret flow) must be referenced.
+	if tmpl.Spec.ServiceAccount == nil || *tmpl.Spec.ServiceAccount != "myapp" {
+		t.Errorf("expected serviceAccount myapp, got %v", tmpl.Spec.ServiceAccount)
+	}
+
+	if len(tmpl.Spec.StepResources) != 2 {
+		t.Fatalf("expected 2 stepResources entries, got %d", len(tmpl.Spec.StepResources))
+	}
+	wantSteps := []string{"s2i-generate", "buildah"}
+	for i, want := range wantSteps {
+		step := tmpl.Spec.StepResources[i]
+		if step.Name != want {
+			t.Errorf("expected step %d name %s, got %s", i, want, step.Name)
+		}
+		if step.Resources.Limits.Memory().String() != "2Gi" {
+			t.Errorf("step %s: unexpected limits: %v", want, step.Resources.Limits)
+		}
+		if len(step.Resources.Requests) != 0 {
+			t.Errorf("step %s: expected no requests, got %v", want, step.Resources.Requests)
+		}
+	}
+}
+
+func TestConvertResourcesExplicitServiceAccountPreserved(t *testing.T) {
+	// Regression (BUILD-2261 CodeRabbit): a BuildConfig with an explicitly
+	// configured spec.serviceAccount but NO pull secret must still carry
+	// that ServiceAccount into the BuildRun template.
+	annotations := runBuildRunTemplateConversion(t, map[string]interface{}{
+		"serviceAccount": "custom-builder-sa",
+		"source": map[string]interface{}{
+			"type": "Git",
+			"git":  map[string]interface{}{"uri": "https://github.com/example/myapp.git"},
+		},
+		"strategy": map[string]interface{}{
+			"type":           "Docker",
+			"dockerStrategy": map[string]interface{}{},
+		},
+		"output": map[string]interface{}{
+			"to": map[string]interface{}{"kind": "DockerImage", "name": "quay.io/example/myapp:latest"},
+		},
+		"resources": map[string]interface{}{
+			"limits": map[string]interface{}{"memory": "2Gi"},
+		},
+	})
+
+	value, ok := annotations[BuildRunTemplateAnnotation]
+	if !ok {
+		t.Fatalf("expected annotation %s, got: %v", BuildRunTemplateAnnotation, annotations)
+	}
+
+	tmpl := unmarshalBuildRunTemplate(t, value)
+
+	if tmpl.Spec.ServiceAccount == nil || *tmpl.Spec.ServiceAccount != "custom-builder-sa" {
+		t.Errorf("expected serviceAccount custom-builder-sa, got %v", tmpl.Spec.ServiceAccount)
+	}
+}
+
+func TestConvertResourcesRequestsOnly(t *testing.T) {
+	annotations := runBuildRunTemplateConversion(t, map[string]interface{}{
+		"source": map[string]interface{}{
+			"type": "Git",
+			"git":  map[string]interface{}{"uri": "https://github.com/example/myapp.git"},
+		},
+		"strategy": map[string]interface{}{
+			"type":           "Docker",
+			"dockerStrategy": map[string]interface{}{},
+		},
+		"output": map[string]interface{}{
+			"to": map[string]interface{}{"kind": "DockerImage", "name": "quay.io/example/myapp:latest"},
+		},
+		"resources": map[string]interface{}{
+			"requests": map[string]interface{}{"cpu": "250m"},
+		},
+	})
+
+	value, ok := annotations[BuildRunTemplateAnnotation]
+	if !ok {
+		t.Fatalf("expected annotation %s for requests-only resources", BuildRunTemplateAnnotation)
+	}
+	tmpl := unmarshalBuildRunTemplate(t, value)
+	if tmpl.Spec.StepResources[0].Resources.Requests.Cpu().String() != "250m" {
+		t.Errorf("unexpected requests: %v", tmpl.Spec.StepResources[0].Resources.Requests)
+	}
+	if len(tmpl.Spec.StepResources[0].Resources.Limits) != 0 {
+		t.Errorf("expected no limits, got %v", tmpl.Spec.StepResources[0].Resources.Limits)
+	}
+}
+
+func TestConvertResourcesEmptyNoAnnotation(t *testing.T) {
+	specs := map[string]map[string]interface{}{
+		"no resources field": {
+			"source": map[string]interface{}{
+				"type": "Git",
+				"git":  map[string]interface{}{"uri": "https://github.com/example/myapp.git"},
+			},
+			"strategy": map[string]interface{}{
+				"type":           "Docker",
+				"dockerStrategy": map[string]interface{}{},
+			},
+			"output": map[string]interface{}{
+				"to": map[string]interface{}{"kind": "DockerImage", "name": "quay.io/example/myapp:latest"},
+			},
+		},
+		"empty resources": {
+			"source": map[string]interface{}{
+				"type": "Git",
+				"git":  map[string]interface{}{"uri": "https://github.com/example/myapp.git"},
+			},
+			"strategy": map[string]interface{}{
+				"type":           "Docker",
+				"dockerStrategy": map[string]interface{}{},
+			},
+			"output": map[string]interface{}{
+				"to": map[string]interface{}{"kind": "DockerImage", "name": "quay.io/example/myapp:latest"},
+			},
+			"resources": map[string]interface{}{},
+		},
+	}
+
+	for name, spec := range specs {
+		t.Run(name, func(t *testing.T) {
+			annotations := runBuildRunTemplateConversion(t, spec)
+			if _, ok := annotations[BuildRunTemplateAnnotation]; ok {
+				t.Errorf("expected no %s annotation, got: %v", BuildRunTemplateAnnotation, annotations)
+			}
+		})
+	}
+}
+
+func parseBuildConfigJSON(t *testing.T, raw string) *buildv1.BuildConfig {
+	t.Helper()
+	bc := &buildv1.BuildConfig{}
+	if err := json.Unmarshal([]byte(raw), bc); err != nil {
+		t.Fatalf("failed to parse BuildConfig JSON: %v", err)
+	}
+	return bc
+}
+
+func TestConvertResourcesLogsWarning(t *testing.T) {
+	logger, hook := logrustest.NewNullLogger()
+	converter := &Converter{Log: logger}
+
+	bcJSON := `{
+		"apiVersion": "build.openshift.io/v1",
+		"kind": "BuildConfig",
+		"metadata": {"name": "myapp", "namespace": "myns"},
+		"spec": {
+			"source": {"type": "Git", "git": {"uri": "https://github.com/example/myapp.git"}},
+			"strategy": {"type": "Docker", "dockerStrategy": {}},
+			"output": {"to": {"kind": "DockerImage", "name": "quay.io/example/myapp:latest"}},
+			"resources": {"limits": {"memory": "4Gi"}}
+		}
+	}`
+	bc := parseBuildConfigJSON(t, bcJSON)
+
+	if _, err := converter.Convert(bc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundWarn := false
+	foundInfo := false
+	for _, entry := range hook.AllEntries() {
+		if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "Resource requirements are not supported on Shipwright Build") {
+			foundWarn = true
+		}
+		if entry.Level == logrus.InfoLevel && strings.Contains(entry.Message, "Generated BuildRun template with resource requirements") {
+			foundInfo = true
+		}
+	}
+	if !foundWarn {
+		t.Error("expected WARN log about unsupported resource requirements")
+	}
+	if !foundInfo {
+		t.Error("expected INFO log about generated BuildRun template")
+	}
+}
+
+// TestConvertResourcesCustomStrategyOmitsStepResources covers the CodeRabbit
+// finding on BUILD-2261: when the strategy is remapped to a custom
+// ClusterBuildStrategy its step names are unknown, so the BuildRun template
+// must still be emitted but without stepResources (default step names would
+// be rejected at admission), and the user must be warned to fill them in.
+func TestConvertResourcesCustomStrategyOmitsStepResources(t *testing.T) {
+	tests := []struct {
+		name         string
+		mapping      map[string]string
+		strategyJSON string
+		wantStrategy string
+	}{
+		{
+			name:         "Docker remapped",
+			mapping:      map[string]string{"docker": "my-custom-buildah"},
+			strategyJSON: `{"type": "Docker", "dockerStrategy": {}}`,
+			wantStrategy: "my-custom-buildah",
+		},
+		{
+			name:         "Source remapped",
+			mapping:      map[string]string{"s2i": "my-custom-s2i"},
+			strategyJSON: `{"type": "Source", "sourceStrategy": {"from": {"kind": "DockerImage", "name": "python:3.9"}}}`,
+			wantStrategy: "my-custom-s2i",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, hook := logrustest.NewNullLogger()
+			converter := &Converter{
+				Log:  logger,
+				Opts: PluginOptionalFields{StrategyMapping: tt.mapping},
+			}
+
+			bcJSON := `{
+				"apiVersion": "build.openshift.io/v1",
+				"kind": "BuildConfig",
+				"metadata": {"name": "myapp", "namespace": "myns"},
+				"spec": {
+					"source": {"type": "Git", "git": {"uri": "https://github.com/example/myapp.git"}},
+					"strategy": ` + tt.strategyJSON + `,
+					"output": {"to": {"kind": "DockerImage", "name": "quay.io/example/myapp:latest"}},
+					"resources": {"requests": {"cpu": "250m"}, "limits": {"memory": "4Gi"}}
+				}
+			}`
+			bc := parseBuildConfigJSON(t, bcJSON)
+
+			result, err := converter.Convert(bc)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			b := &shipwrightv1beta1.Build{}
+			jsonBytes, _ := json.Marshal(result[0].Object)
+			json.Unmarshal(jsonBytes, b)
+			if b.Spec.Strategy.Name != tt.wantStrategy {
+				t.Errorf("expected strategy %s, got %s", tt.wantStrategy, b.Spec.Strategy.Name)
+			}
+
+			value, ok := result[0].GetAnnotations()[BuildRunTemplateAnnotation]
+			if !ok {
+				t.Fatalf("expected annotation %s on converted Build", BuildRunTemplateAnnotation)
+			}
+			tmpl := unmarshalBuildRunTemplate(t, value)
+			if len(tmpl.Spec.StepResources) != 0 {
+				t.Errorf("expected stepResources omitted for custom strategy, got %v", tmpl.Spec.StepResources)
+			}
+			if tmpl.Spec.Build.Name == nil || *tmpl.Spec.Build.Name != b.Name {
+				t.Errorf("expected template to reference build %q, got %v", b.Name, tmpl.Spec.Build.Name)
+			}
+
+			foundOmitWarn := false
+			for _, entry := range hook.AllEntries() {
+				if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "custom mapping with unknown step names") {
+					foundOmitWarn = true
+				}
+				if entry.Level == logrus.InfoLevel && strings.Contains(entry.Message, "Generated BuildRun template with resource requirements") {
+					t.Error("did not expect INFO log about generated stepResources for custom strategy")
+				}
+			}
+			if !foundOmitWarn {
+				t.Error("expected WARN log about omitted stepResources for custom strategy mapping")
+			}
+		})
+	}
+}
+
+// TestGenerateServiceAccountWarnsOnSharedServiceAccount covers the CodeRabbit
+// finding on BUILD-2261: crane runs this plugin once per resource in its own
+// process, so a ServiceAccount named by spec.serviceAccount and shared with
+// other BuildConfigs is emitted with only this BuildConfig's pull secret. The
+// conversion cannot merge the others, so it must warn instead of losing them
+// silently.
+func TestGenerateServiceAccountWarnsOnSharedServiceAccount(t *testing.T) {
+	tests := []struct {
+		name           string
+		serviceAccount string
+		wantSAName     string
+		wantWarn       bool
+	}{
+		{
+			name:           "shared serviceAccount warns",
+			serviceAccount: "builder",
+			wantSAName:     "builder",
+			wantWarn:       true,
+		},
+		{
+			name:       "serviceAccount derived from BuildConfig name does not warn",
+			wantSAName: "myapp",
+			wantWarn:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, hook := logrustest.NewNullLogger()
+			converter := &Converter{Log: logger}
+
+			serviceAccount := ""
+			if tt.serviceAccount != "" {
+				serviceAccount = fmt.Sprintf(`"serviceAccount": %q,`, tt.serviceAccount)
+			}
+			bc := parseBuildConfigJSON(t, fmt.Sprintf(`{
+				"apiVersion": "build.openshift.io/v1",
+				"kind": "BuildConfig",
+				"metadata": {"name": "myapp", "namespace": "myns"},
+				"spec": {
+					%s
+					"source": {"type": "Git", "git": {"uri": "https://github.com/example/myapp.git"}},
+					"strategy": {"type": "Docker", "dockerStrategy": {"pullSecret": {"name": "my-pull-secret"}}},
+					"output": {"to": {"kind": "DockerImage", "name": "quay.io/example/myapp:latest"}}
+				}
+			}`, serviceAccount))
+
+			sa := converter.generateServiceAccount(bc, converter.getPullSecret(bc))
+			if sa == nil {
+				t.Fatal("expected a generated ServiceAccount")
+			}
+			if sa.Name != tt.wantSAName {
+				t.Errorf("expected ServiceAccount name %q, got %q", tt.wantSAName, sa.Name)
+			}
+
+			gotWarn := false
+			for _, entry := range hook.AllEntries() {
+				if entry.Level == logrus.WarnLevel &&
+					strings.Contains(entry.Message, "it may share with other BuildConfigs") {
+					gotWarn = true
+				}
+			}
+			if gotWarn != tt.wantWarn {
+				t.Errorf("expected shared-ServiceAccount warning %v, got %v", tt.wantWarn, gotWarn)
+			}
+		})
 	}
 }
