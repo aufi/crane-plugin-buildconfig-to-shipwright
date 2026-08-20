@@ -280,6 +280,8 @@ EOF
 kubectl get buildrun -w
 ```
 
+**Note:** When using HTTP registries (like Minikube's local registry) or registries with self-signed certificates, add the `registries-insecure` parameter to your Build. See examples in the setup script output.
+
 ## Troubleshooting
 
 ### Minikube Issues

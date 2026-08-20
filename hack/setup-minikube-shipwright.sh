@@ -262,7 +262,7 @@ print_summary() {
     log "  2. Run E2E test: ./tests/e2e-transform.sh"
     log "  3. Apply transformed resources to this cluster"
     log ""
-    log "Example Build resource:"
+    log "Example Build resource (uses insecure HTTP registry):"
     log "  kubectl apply -f - <<EOF"
     log "  apiVersion: shipwright.io/v1beta1"
     log "  kind: Build"
@@ -276,9 +276,15 @@ print_summary() {
     log "    strategy:"
     log "      name: buildah"
     log "      kind: ClusterBuildStrategy"
+    log "    paramValues:"
+    log "    - name: registries-insecure"
+    log "      values:"
+    log "      - value: registry.kube-system.svc.cluster.local:80"
     log "    output:"
     log "      image: registry.kube-system.svc.cluster.local:80/example:latest"
     log "  EOF"
+    log ""
+    log "Note: registries-insecure parameter is required for HTTP registry"
 }
 
 main() {

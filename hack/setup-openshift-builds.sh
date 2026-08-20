@@ -437,9 +437,15 @@ print_summary() {
     log "    strategy:"
     log "      name: buildah"
     log "      kind: ClusterBuildStrategy"
+    log "    paramValues:"
+    log "    - name: registries-insecure"
+    log "      values:"
+    log "      - value: image-registry.openshift-image-registry.svc:5000"
     log "    output:"
     log "      image: image-registry.openshift-image-registry.svc:5000/$NAMESPACE/example:latest"
     log "  EOF"
+    log ""
+    log "Note: registries-insecure parameter may be needed if registry uses self-signed certs"
 }
 
 main() {
