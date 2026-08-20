@@ -209,9 +209,36 @@ Requires Go 1.26+ (forced by transitive dependencies).
 
 ## Testing
 
+The project uses a three-level testing strategy:
+
+### 1. Unit Tests
+Standard Go tests at the method level, testing individual functions and transformation logic.
+
 ```bash
 GOTOOLCHAIN=auto go test ./...
 ```
+
+### 2. Plugin E2E Tests
+Tests the plugin binary in isolation (with crane), processing input YAML manifest files and asserting expected output manifests.
+
+```bash
+# TBD, or WIP ./tests/e2e-transform.sh
+```
+
+These tests verify the transformation logic works correctly without requiring a live cluster.
+
+### 3. Cluster E2E Tests
+Full end-to-end tests on real Kubernetes clusters, validating the entire workflow:
+- **Minikube** - with fake BuildConfig CRD (CRD only, no build functionality)
+- **OpenShift** - with full OpenShift Builds/Shipwright installation
+
+Tests the complete flow: export from cluster → transformation → import → verify Shipwright Builds are valid and functional (trigger actual builds with configured strategies).
+
+```bash
+# TBD
+```
+
+See [`hack/README.md`](hack/README.md) for detailed setup instructions.
 
 ## Known limitations
 
