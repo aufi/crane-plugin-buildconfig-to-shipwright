@@ -40,6 +40,25 @@ Requires Go 1.26+ (forced by transitive dependencies). The `replace` directive i
 
 ## Testing
 
-```
+The project uses a three-level testing strategy:
+
+### 1. Unit Tests
+Standard Go tests at the method level:
+
+```bash
 GOTOOLCHAIN=auto go test ./...
 ```
+
+### 2. Plugin E2E Tests
+Tests the plugin binary with crane, processing input YAMLs and asserting output transformations:
+
+```bash
+./tests/e2e-transform.sh
+```
+
+### 3. Cluster E2E Tests
+Full end-to-end validation on real clusters (Minikube or OpenShift). See [`hack/README.md`](hack/README.md) for detailed setup instructions and troubleshooting and ['.github/workflows/test-e2e-minikube-pr.yml'](.github/workflows/test-e2e-minikube-pr.yml) for example test flow.
+
+**CI/CD:**
+
+Pull requests run automated E2E tests on Minikube via [`.github/workflows/test-e2e-minikube-pr.yml`](.github/workflows/test-e2e-minikube-pr.yml).
