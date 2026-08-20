@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode"
 
 	buildv1 "github.com/openshift/api/build/v1"
 	shipwrightv1beta1 "github.com/shipwright-io/build/pkg/apis/build/v1beta1"
@@ -24,10 +25,21 @@ const (
 	SquashParamName           = "squash"
 	ForcePullParamName        = "pull"
 	RuntimeStageFromParamName = "runtime-stage-from"
+	BuildArgsParamName        = "build-args"
 
 	Timeout = 10 * time.Minute
 
-	ConvertedFromAnnotation    = "crane.konveyor.io/converted-from"
+	ConvertedFromAnnotation      = "crane.konveyor.io/converted-from"
+	ConversionWarningsAnnotation = "crane.konveyor.io/conversion-warnings"
+
+	// maxConversionWarningsBytes caps the ConversionWarningsAnnotation value.
+	// Kubernetes rejects an object whose annotations total more than 256 KiB
+	// (apimachinery TotalAnnotationSizeLimitB), and warning text embeds
+	// user-controlled build arg names, so an unbounded value could make the
+	// converted Build unappliable. 32 KiB holds well over a hundred warnings
+	// and leaves the rest of the budget to BuildRunTemplateAnnotation and
+	// OriginalTriggersAnnotation. Warnings are always logged in full.
+	maxConversionWarningsBytes = 32 << 10
 	BuildRunTemplateAnnotation = "buildconfig-to-shipwright/buildrun-template"
 	OriginalTriggersAnnotation = "buildconfig-to-shipwright/original-triggers"
 
@@ -181,6 +193,72 @@ func (c *Converter) copyLabels(bc *buildv1.BuildConfig) map[string]string {
 	return labels
 }
 
+// validBuildArgName reports whether a build arg name is safe to embed in a
+// docker --build-arg NAME=VALUE pair or a Shipwright ObjectKeyRef Format
+// template. Names containing '=', '$', '{', '}', whitespace, or control
+// characters would corrupt the emitted format — e.g. a name containing
+// ${SECRET_VALUE} would be substituted a second time at BuildRun resolution,
+// relocating secret material into the arg-name position — and can never match
+// a Dockerfile ARG, so such args are skipped with a warning.
+func validBuildArgName(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name, "=${}") {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// boundedWarnings joins warnings for ConversionWarningsAnnotation, keeping the
+// value under maxConversionWarningsBytes. Only whole warnings are kept; when
+// any are dropped a final line records how many, so a truncated annotation is
+// never mistaken for the complete set. The full list is always in the logs.
+func (c *Converter) boundedWarnings(warnings []string) string {
+	joined := strings.Join(warnings, "\n")
+	if len(joined) <= maxConversionWarningsBytes {
+		return joined
+	}
+
+	// Reserve room for the omitted-count line up front. Its length grows with
+	// the count, so budget for the worst case: every warning omitted.
+	reserved := len(omittedWarningsNotice(len(warnings))) + 1 // +1 for its newline
+
+	var b strings.Builder
+	kept := 0
+	for _, w := range warnings {
+		needed := len(w)
+		if kept > 0 {
+			needed++ // separator newline
+		}
+		if b.Len()+needed+reserved > maxConversionWarningsBytes {
+			break
+		}
+		if kept > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(w)
+		kept++
+	}
+
+	if kept > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString(omittedWarningsNotice(len(warnings) - kept))
+	c.Log.Warnf("Conversion warnings exceeded %d bytes — %d of %d warnings were omitted from annotation %s; the full list is in the warnings logged above.", maxConversionWarningsBytes, len(warnings)-kept, len(warnings), ConversionWarningsAnnotation)
+	return b.String()
+}
+
+// omittedWarningsNotice is the trailing line of a truncated warnings annotation.
+func omittedWarningsNotice(omitted int) string {
+	return fmt.Sprintf("... %d more conversion warning(s) omitted to stay within the Kubernetes annotation size limit — see the crane plugin logs for the full list.", omitted)
+}
+
 func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) error {
 	strategyName := defaultDockerStrategy
 	if override, ok := c.Opts.StrategyMapping["docker"]; ok && override != "" {
@@ -247,17 +325,84 @@ func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwright
 		})
 	}
 
-	// BuildArgs
+	// BuildArgs — literal values pass through as NAME=VALUE; ConfigMap/Secret
+	// backed args map to Shipwright's native ObjectKeyRef resolution (resolved
+	// at BuildRun time); fieldRef/resourceFieldRef have no Shipwright
+	// equivalent and are skipped with a warning.
 	if len(ds.BuildArgs) > 0 {
 		values := []shipwrightv1beta1.SingleValue{}
-		for _, arg := range ds.BuildArgs {
-			envNameValue := arg.Name + "=" + arg.Value
-			values = append(values, shipwrightv1beta1.SingleValue{Value: &envNameValue})
+		literal, mapped, skipped := 0, 0, 0
+		warnings := []string{}
+		warnf := func(format string, args ...interface{}) {
+			msg := fmt.Sprintf(format, args...)
+			c.Log.Warn(msg)
+			warnings = append(warnings, msg)
 		}
-		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
-			Name:   "build-args",
-			Values: values,
-		})
+		for _, arg := range ds.BuildArgs {
+			if !validBuildArgName(arg.Name) {
+				warnf("Build arg with invalid name %q was skipped — names must be non-empty and must not contain '=', '$', '{', '}', whitespace, or control characters (BuildConfig %s).", arg.Name, bc.Name)
+				skipped++
+				continue
+			}
+			if arg.ValueFrom != nil && arg.Value != "" {
+				warnf("Build arg %q sets both value and valueFrom; using valueFrom and ignoring the literal value (BuildConfig %s).", arg.Name, bc.Name)
+			}
+			switch {
+			case arg.ValueFrom == nil:
+				envNameValue := arg.Name + "=" + arg.Value
+				values = append(values, shipwrightv1beta1.SingleValue{Value: &envNameValue})
+				literal++
+			case arg.ValueFrom.ConfigMapKeyRef != nil:
+				ref := arg.ValueFrom.ConfigMapKeyRef
+				if ref.Name == "" || ref.Key == "" {
+					warnf("Build arg %q references a ConfigMap with an empty name or key and was skipped (BuildConfig %s).", arg.Name, bc.Name)
+					skipped++
+					continue
+				}
+				if ref.Optional != nil && *ref.Optional {
+					warnf("Build arg %q references ConfigMap %q key %q with optional: true — Shipwright has no 'optional' equivalent; a missing key will fail the BuildRun (BuildConfig %s).", arg.Name, ref.Name, ref.Key, bc.Name)
+				}
+				format := arg.Name + "=${CONFIGMAP_VALUE}"
+				values = append(values, shipwrightv1beta1.SingleValue{
+					ConfigMapValue: &shipwrightv1beta1.ObjectKeyRef{Name: ref.Name, Key: ref.Key, Format: &format},
+				})
+				mapped++
+			case arg.ValueFrom.SecretKeyRef != nil:
+				ref := arg.ValueFrom.SecretKeyRef
+				if ref.Name == "" || ref.Key == "" {
+					warnf("Build arg %q references a Secret with an empty name or key and was skipped (BuildConfig %s).", arg.Name, bc.Name)
+					skipped++
+					continue
+				}
+				if ref.Optional != nil && *ref.Optional {
+					warnf("Build arg %q references Secret %q key %q with optional: true — Shipwright has no 'optional' equivalent; a missing key will fail the BuildRun (BuildConfig %s).", arg.Name, ref.Name, ref.Key, bc.Name)
+				}
+				format := arg.Name + "=${SECRET_VALUE}"
+				values = append(values, shipwrightv1beta1.SingleValue{
+					SecretValue: &shipwrightv1beta1.ObjectKeyRef{Name: ref.Name, Key: ref.Key, Format: &format},
+				})
+				mapped++
+			case arg.ValueFrom.FieldRef != nil || arg.ValueFrom.ResourceFieldRef != nil:
+				warnf("Build arg %q uses fieldRef/resourceFieldRef which has no Shipwright equivalent. This build arg was skipped — set it manually in the generated Build (BuildConfig %s).", arg.Name, bc.Name)
+				skipped++
+			default:
+				warnf("Build arg %q has an empty or unsupported valueFrom source. This build arg was skipped — set it manually in the generated Build (BuildConfig %s).", arg.Name, bc.Name)
+				skipped++
+			}
+		}
+		if len(values) > 0 {
+			b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+				Name:   BuildArgsParamName,
+				Values: values,
+			})
+		}
+		if len(warnings) > 0 {
+			if b.Annotations == nil {
+				b.Annotations = map[string]string{}
+			}
+			b.Annotations[ConversionWarningsAnnotation] = c.boundedWarnings(warnings)
+		}
+		c.Log.Infof("Processed %d build args: %d literal, %d mapped to ConfigMap/Secret refs, %d skipped for BuildConfig %s", len(ds.BuildArgs), literal, mapped, skipped, bc.Name)
 	}
 
 	// ImageOptimizationPolicy (squash)
