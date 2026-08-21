@@ -33,14 +33,18 @@ no change anywhere else.
 
 2. Run it against the merge base.
 
+   `$REPO` here is the review worktree the orchestrator created, not the user's checkout.
+   Both CLIs run against it, so even the write-capable one can only touch a throwaway tree.
+
    **coderabbit:**
 
    ```bash
-   coderabbit review --plain --base "$MERGE_BASE" --cwd "$REPO" -c AGENTS.md
+   coderabbit review --plain --base-commit "$MERGE_BASE" --cwd "$REPO" -c AGENTS.md
    ```
 
-   `-c AGENTS.md` feeds it the repo's own conventions, so its findings account for local
-   invariants instead of reporting workspace noise.
+   `--base-commit` takes the merge-base SHA (`--base` is not a CodeRabbit flag). `--plain`
+   gives scriptable output. `-c AGENTS.md` feeds it the repo's own conventions, so its
+   findings account for local invariants instead of reporting workspace noise.
 
    **qodo:**
 
@@ -48,6 +52,11 @@ no change anywhere else.
    qodo "Review the diff between $MERGE_BASE and HEAD. Focus on correctness and edge
    cases. Report file and line for each issue." --dir "$REPO" -q -y
    ```
+
+   `qodo` defaults to a writable, auto-approving session; running it inside the disposable
+   worktree is what keeps that safe. If your `qodo` build supports a read-only agent file
+   or a `--permissions=r` flag, pass it as defence in depth — but never a flag that writes
+   back to the branch.
 
    Give either tool a generous timeout. If it exceeds it, kill it and report
    `status: failed` with `reason: timed out after Ns` — never a clean empty result.

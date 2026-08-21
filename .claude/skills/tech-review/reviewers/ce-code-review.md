@@ -51,10 +51,11 @@ API contracts, data migrations, and the always-on correctness and testing person
    enabled. Trying and reporting the result is the honest check.
 
 3. Its JSON already carries severity and confidence. Map them onto this schema rather
-   than re-deriving them:
-   - `critical`, `high` → `blocker`
-   - `medium` → `warning`
-   - `low`, `info` → `info`
+   than re-deriving them. ce-code-review emits the `P0`–`P3` scale; older builds emit
+   qualitative labels. Handle both:
+   - `P0`, `P1`, `critical`, `high` → `blocker`
+   - `P2`, `medium` → `warning`
+   - `P3`, `low`, `info` → `info`
 
 4. It reviews whole files for context. Check each finding's line against the changed-file
    list and mark anything the branch did not introduce as `pre-existing`.

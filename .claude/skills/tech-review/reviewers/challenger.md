@@ -31,9 +31,10 @@ For each blocking finding:
 
 1. **Verify it against the code on disk.**
 
-   This review runs on a local branch before any PR exists, so **the working tree is the
-   branch** — reading the cited file gives you the code the finding is about. Read the
-   file and the line. Does the code actually do what the finding claims?
+   This review runs against a disposable worktree of the branch (its path `$WT` is given
+   to you), so **the worktree is the branch after `/simplify`** — reading the cited file
+   there gives you the exact code the finding is about, edits included. Read the file and
+   the line. Does the code actually do what the finding claims?
 
    Common false positives:
    - "Missing nil check" when the check exists a few lines up, or in the caller

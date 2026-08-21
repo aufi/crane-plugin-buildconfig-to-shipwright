@@ -7,7 +7,7 @@ file's contents in each sub-agent's prompt.
 
 Write one JSON object to:
 
-```
+```text
 <scratchpad>/tech-review-<BRANCH>/<source>.json
 ```
 

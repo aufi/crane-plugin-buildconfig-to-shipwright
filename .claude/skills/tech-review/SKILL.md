@@ -31,9 +31,11 @@ If the user asks to review an open PR, or someone else's PR, say so and point at
 1. **Never check out a branch.** `git diff --no-ext-diff origin/main...BRANCH` produces
    the diff without switching. This checkout may be shared with another session; a
    `git checkout` or `git stash` here can destroy work that is not yours.
-2. **Never write to the user's repos, Jira, or a tracker.** This skill reports. Findings
-   go to the terminal. The only mutations are `/simplify`'s edits and, behind `--fix`,
-   findings the user approved.
+2. **All edits happen in a disposable worktree, never the user's checkout.** This skill
+   reports; findings go to the terminal. `/simplify` (always) and `--fix` (on request)
+   edit an isolated worktree of the branch created in Stage 0f — so the default path
+   leaves the user's repo byte-for-byte unchanged, and rollback is `git worktree remove`.
+   Nothing is committed, pushed, or written to Jira or a tracker.
 3. **Baseline is fetched `origin/main`, never local `main`.** A stale local main
    misattributes already-merged work to the branch and produces false blockers.
 4. **Every `git diff` and `git show` uses `--no-ext-diff`.** The repo's external diff
@@ -110,12 +112,16 @@ For a `BUILD-XXXX` key, search local *and* remote refs — a fresh clone has no 
 branch for work that exists on the fork:
 
 ```bash
-git for-each-ref --format='%(refname:short)' refs/heads refs/remotes \
-  | grep -E "BUILD-1234" | grep -vE '(^|/)main$'
+git for-each-ref --format='%(refname)' refs/heads refs/remotes \
+  | sed -E 's#^refs/heads/##; s#^refs/remotes/[^/]+/##' \
+  | grep -E "BUILD-1234" | grep -vE '(^|/)main$' | sort -u
 ```
 
 Replace `BUILD-1234` with the actual key. `grep -vE '(^|/)main$'` matches `main` exactly
-— a plain `grep -v main` would also drop a branch named `fix-main-parsing`.
+— a plain `grep -v main` would also drop a branch named `fix-main-parsing`. Stripping the
+`refs/heads/` and `refs/remotes/<remote>/` prefixes and piping through `sort -u` collapses
+a branch that exists both locally and on the fork into one identity — otherwise the same
+branch counts twice and the ambiguity check below stops on a false "more than one branch".
 
 If more than one branch matches, list them and stop. One story maps to one branch per
 repo; two branches means the work needs consolidating first.
@@ -179,6 +185,32 @@ always the prefix. No match means no design doc — cross-repo check 5 reports S
 which is not an error. More than one match takes the most recently modified and says in
 the output which it chose.
 
+### 0f. Create the review worktree
+
+Every stage that reads or edits code runs against a disposable worktree of the branch,
+not the shared checkout. This is what keeps the default path report-only: `/simplify` and
+`--fix` edit the worktree, so the user's repo is never touched and rollback is a single
+`git worktree remove`. It also fixes the review target — the worktree is the one
+immutable copy every reviewer sees, even after `/simplify` edits it.
+
+```bash
+WT="$(mktemp -d)/tech-review-$BRANCH"
+git worktree add --detach "$WT" "$BRANCH"
+```
+
+`$WT` is the working directory for Stages 2, 3, 4, and 7. `$BASE` is still the merge base,
+and the worktree starts at the branch tip, so the review target is:
+
+```bash
+git -C "$WT" diff --no-ext-diff "$BASE"    # BASE → worktree tree, including /simplify's edits
+```
+
+Remove the worktree when the run ends, including on any early exit:
+
+```bash
+git worktree remove --force "$WT"
+```
+
 ---
 
 ## Stage 1: Evidence gate
@@ -208,21 +240,23 @@ them twice. Report pending cluster evidence rather than blocking on it.
 
 ## Stage 2: Simplify
 
-Dispatch one sub-agent from `reviewers/simplify.md`. It runs sequentially, before the
-other reviewers, and it is the only reviewer that changes files.
+Dispatch one sub-agent from `reviewers/simplify.md`, pointed at the worktree `$WT`. It
+runs sequentially, before the other reviewers, and it is the only reviewer that changes
+files — and it changes them only inside `$WT`, never the user's checkout.
 
-It runs first on purpose: its edits land inside the branch diff, so the reviewers in
-Stage 3 review them. Run last, or in a side worktree, and nothing checks its output.
+It runs first on purpose: its edits land in the worktree's diff, so the Stage 3 reviewers
+review them too. Run it last and nothing checks its output.
 
-After it returns, run the unit tests it reports:
+After it returns, run the unit tests in the worktree:
 
 ```bash
-cd "<Crane Plugin Repo>" && GOWORK=off go test ./... -count=1
+cd "$WT" && GOWORK=off go test ./... -count=1
 ```
 
-`GOWORK=off` is what CI builds. A failure here means `/simplify` broke the branch:
-revert its diff, report that it was reverted and why, and continue to Stage 3 without
-it. Never leave the branch broken.
+`GOWORK=off` is what CI builds. A failure means `/simplify` broke the branch: discard its
+edits with `git -C "$WT" checkout -- .`, report that they were dropped and why, and
+continue to Stage 3 without them. The worktree makes this safe — it holds nothing but the
+branch and `/simplify`'s edits, so a blanket discard cannot touch anyone else's work.
 
 ---
 
@@ -249,8 +283,10 @@ Read each file's body and pass it as the sub-agent prompt with
 — do not look for them in the agent registry. Map the `model:` field in each file's
 frontmatter to the Agent tool's `model` parameter.
 
-Give every sub-agent the branch name, the merge base, the changed-file list, and the
-contents of `findings-schema.md`.
+Give every sub-agent the branch name, the merge base, the changed-file list, the worktree
+path `$WT` (their working directory and the single review target), and the contents of
+`findings-schema.md`. Reviewers read and run against `$WT`, never the shared checkout —
+so even a CLI tool that writes can only touch the throwaway worktree.
 
 ### ce-code-review escalation
 
@@ -269,10 +305,15 @@ own sub-agent, and `/deep-review` performs the deep multi-persona pass at PR tim
 
 ## Stage 4: Challenger
 
-Collect every finding marked `blocker`. If there are none, skip this stage and say so.
+Run this **after Stage 5**, not before it. Cross-repo checks 5a, 5b and 5e also emit
+blockers, and every blocker that gates the verdict must be challenged — a blocker that
+skips disproof is exactly the false positive this stage exists to catch.
 
-Otherwise dispatch one sub-agent from `reviewers/challenger.md` with the blocker set,
-the diff, and the branch name.
+Collect every finding marked `blocker` from Stage 3 **and** Stage 5. If there are none,
+skip this stage and say so.
+
+Otherwise dispatch one sub-agent from `reviewers/challenger.md` with the blocker set, the
+worktree path `$WT` (where it reads the code), the merge base, and the branch name.
 
 Blockers only. They are the findings that gate the verdict, and a false blocker is the
 expensive failure — it stops a good branch. Warnings and info are reported as they came,
@@ -363,7 +404,13 @@ source that found it.
 
 Findings tagged `pre-existing` never block. Report them in their own section.
 
-```
+Apply the challenger's adjudication before building the verdict: drop every finding in
+its `removed` array, and replace the original blockers with its `upheld` entries,
+honouring each entry's `action` (kept, downgraded, merged) and `severity`. A blocker the
+challenger removed or downgraded must not reappear as a blocker in the verdict — that is
+the whole point of Stage 4.
+
+```text
 ================================================================================
 TECH REVIEW: <BRANCH>
 ================================================================================
@@ -399,9 +446,9 @@ CROSS-REPO
   5d tests     <result>
   5e design    <result>
 
-APPLIED BY /simplify
+APPLIED BY /simplify (in the review worktree — your checkout is untouched)
   <file> — what changed
-  Revert: git checkout -- <paths>
+  To keep these: git -C <your repo> apply <patch printed below>
 
 NOTES
   <anything surprising: a reviewer that failed oddly, a finding pattern no
@@ -438,22 +485,29 @@ a stage that silently did not run.
 
 ## Stage 7: Apply fixes
 
-Skipped unless `--fix` was passed. Without it this skill has changed nothing except
-`/simplify`'s edits, which are already reported with their revert command.
+Skipped unless `--fix` was passed. Without it this skill has changed nothing at all in the
+user's checkout — every edit lived and died in the review worktree.
 
-With `--fix`:
+With `--fix`, edits still land in the worktree `$WT`, never the user's checkout:
 
 1. Split findings into mechanical and judgement. A missing nil guard or a wrong constant
    is mechanical. Changing a function signature, an API contract, or deferring a feature
    is a judgement call.
 2. Present both lists and ask once, via AskUserQuestion, which to apply.
-3. Apply only what was approved.
-4. Re-run `GOWORK=off go test ./... -count=1`. If it fails, revert the last change and
-   report; never leave the branch broken.
-5. Report what was applied and what was skipped.
+3. Apply only what was approved, in `$WT`.
+4. Re-run `cd "$WT" && GOWORK=off go test ./... -count=1`. If it fails, discard the last
+   change in the worktree and report; never emit a patch that breaks the build.
+5. Emit the combined patch (`/simplify` + approved fixes) so the user or `/tech-implement`
+   can apply it to the real checkout:
 
-Do not commit. Committing is the caller's step — `/tech-implement` owns the commit, and
-this checkout may be shared.
+   ```bash
+   git -C "$WT" diff --no-ext-diff "$BASE" > <scratchpad>/tech-review-<BRANCH>/fixes.patch
+   ```
+
+6. Report what was applied and what was skipped.
+
+Do not commit and do not write to the user's checkout. Committing is the caller's step —
+`/tech-implement` owns the commit. The worktree is removed after the patch is emitted.
 
 ---
 
@@ -467,7 +521,7 @@ this checkout may be shared.
 | Branch not found | Re-run without stderr suppression, report which failure it was |
 | Two branches match the key | Stop; one story maps to one branch |
 | A CLI is absent | Record it, continue with the rest |
-| `/simplify` breaks the tests | Revert its diff, report, continue |
+| `/simplify` breaks the tests | Discard its edits in the worktree, report, continue |
 | `ce-code-review` plugin absent | Sub-agent returns `unavailable`, named in the report |
 | A sub-agent returns nothing | Treat as `failed`, name it, do not report a clean result |
 | No design doc | Check 5e SKIPPED, not a finding |
