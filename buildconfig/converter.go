@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/yaml"
 )
 
@@ -153,6 +154,7 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	c.processSource(bc, b)
 	c.processOutput(bc, b)
 	c.processCompletionDeadline(bc, b)
+	c.processNodeSelector(bc, b)
 	c.processRunPolicy(bc)
 	c.processPostCommit(bc)
 	c.processSuccessfulBuildsHistoryLimit(bc, b)
@@ -903,6 +905,46 @@ func (c *Converter) processCompletionDeadline(bc *buildv1.BuildConfig, b *shipwr
 	b.Spec.Timeout = &timeout
 	c.Log.Infof("Mapping completionDeadlineSeconds %ds to Build timeout %s for BuildConfig %s",
 		seconds, timeout.Duration, bc.Name)
+}
+
+// processNodeSelector maps BuildConfig spec.nodeSelector to Shipwright Build
+// spec.nodeSelector (BUILD-2264). Shipwright merges the Build's node selector
+// with any BuildRun override and applies the result to the build pod template,
+// so the placement the BuildConfig asked for survives migration without the
+// user having to touch anything.
+//
+// nil and an empty map are handled alike. OpenShift distinguishes them — nil
+// lets the cluster-wide buildDefaults.nodeSelector apply, an explicit empty map
+// opts out of it — but Shipwright has no cluster-wide default, so both leave
+// the field unset.
+//
+// An invalid key or value drops the whole selector rather than the offending
+// entry: Shipwright's Build reconciler would mark the Build
+// NodeSelectorNotValid and never register it, and a partially applied selector
+// would silently schedule the build somewhere the BuildConfig never asked for.
+func (c *Converter) processNodeSelector(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) {
+	if len(bc.Spec.NodeSelector) == 0 {
+		return
+	}
+
+	selector := make(map[string]string, len(bc.Spec.NodeSelector))
+	for key, value := range bc.Spec.NodeSelector {
+		if errs := validation.IsQualifiedName(key); len(errs) > 0 {
+			c.Log.Warnf("nodeSelector key %q on BuildConfig %s/%s is not a valid label key (%s); dropping the whole nodeSelector — migrated builds will not be pinned to any node",
+				key, bc.Namespace, bc.Name, strings.Join(errs, "; "))
+			return
+		}
+		if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
+			c.Log.Warnf("nodeSelector value %q for key %q on BuildConfig %s/%s is not a valid label value (%s); dropping the whole nodeSelector — migrated builds will not be pinned to any node",
+				value, key, bc.Namespace, bc.Name, strings.Join(errs, "; "))
+			return
+		}
+		selector[key] = value
+	}
+
+	b.Spec.NodeSelector = selector
+	c.Log.Infof("Mapping nodeSelector %v to Build spec.nodeSelector for BuildConfig %s/%s",
+		bc.Spec.NodeSelector, bc.Namespace, bc.Name)
 }
 
 // processRunPolicy reports the build scheduling behaviour that is lost during
