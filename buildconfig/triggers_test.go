@@ -319,9 +319,13 @@ func TestConvertEmitsTriggerWarnings(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Match on the message with the BuildConfig name stripped out: the fixture is
+	// called "triggered-app", so any warning that merely names it — the dropped
+	// runPolicy, for one — would otherwise be counted as a trigger warning.
 	var triggerWarnings []string
 	for _, entry := range hook.AllEntries() {
-		if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "trigger") {
+		body := strings.ReplaceAll(entry.Message, "triggered-app", "")
+		if entry.Level == logrus.WarnLevel && strings.Contains(body, "trigger") {
 			triggerWarnings = append(triggerWarnings, entry.Message)
 		}
 	}
