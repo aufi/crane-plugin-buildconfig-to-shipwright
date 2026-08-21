@@ -28,7 +28,7 @@ CPUS="${CPUS:-4}"
 MEMORY="${MEMORY:-8192}"
 DRIVER="${DRIVER:-}"
 SHIPWRIGHT_VERSION="${SHIPWRIGHT_VERSION:-v0.20.11}"
-SKIP_CLUSTER_CREATE=false
+SKIP_CLUSTER_CREATE="${SKIP_CLUSTER_CREATE:-false}"
 
 log() { echo "==> $*"; }
 error() { echo "ERROR: $*" >&2; exit 1; }
@@ -52,26 +52,44 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --cluster-name)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--cluster-name requires a valid value (got: ${2:-<missing>})"
+                fi
                 CLUSTER_NAME="$2"
                 shift 2
                 ;;
             --k8s-version)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--k8s-version requires a valid value (got: ${2:-<missing>})"
+                fi
                 K8S_VERSION="$2"
                 shift 2
                 ;;
             --cpus)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--cpus requires a valid value (got: ${2:-<missing>})"
+                fi
                 CPUS="$2"
                 shift 2
                 ;;
             --memory)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--memory requires a valid value (got: ${2:-<missing>})"
+                fi
                 MEMORY="$2"
                 shift 2
                 ;;
             --driver)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--driver requires a valid value (got: ${2:-<missing>})"
+                fi
                 DRIVER="$2"
                 shift 2
                 ;;
             --shipwright-version)
+                if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                    error "--shipwright-version requires a valid value (got: ${2:-<missing>})"
+                fi
                 SHIPWRIGHT_VERSION="$2"
                 shift 2
                 ;;
@@ -104,9 +122,14 @@ create_cluster() {
         driver_arg="--driver=$DRIVER"
     fi
 
-    if minikube status -p "$CLUSTER_NAME" &>/dev/null; then
+    # Check if profile exists (works for both running and stopped clusters)
+    if minikube profile list -o json 2>/dev/null | grep -q "\"Name\":\"$CLUSTER_NAME\""; then
         log "Cluster $CLUSTER_NAME already exists"
-        read -p "Delete and recreate? (y/N): " -r
+        if [ -t 0 ] && [ "${ASSUME_YES:-false}" != true ]; then
+            read -p "Delete and recreate? (y/N): " -r || REPLY=n
+        else
+            REPLY=n  # default to using existing cluster in non-interactive mode
+        fi
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             log "Deleting existing cluster..."
             minikube delete -p "$CLUSTER_NAME"
@@ -140,8 +163,7 @@ install_tekton() {
     kubectl apply -f "https://github.com/tektoncd/pipeline/releases/download/${TEKTON_VERSION}/release.yaml"
 
     log "Waiting for Tekton to be ready..."
-    kubectl wait --for=condition=ready pod \
-        -l app=tekton-pipelines-controller \
+    kubectl rollout status deployment/tekton-pipelines-controller \
         -n tekton-pipelines \
         --timeout=300s
 
@@ -292,9 +314,13 @@ main() {
     check_prereqs
     create_cluster
 
-    # Ensure kubectl context is set
-    log "Using kubectl context: $CLUSTER_NAME"
-    kubectl config use-context "$CLUSTER_NAME"
+    # Set kubectl context (skip if using existing cluster with --skip-cluster-create)
+    if [ "$SKIP_CLUSTER_CREATE" != true ]; then
+        log "Using kubectl context: $CLUSTER_NAME"
+        kubectl config use-context "$CLUSTER_NAME"
+    else
+        log "Using current kubectl context: $(kubectl config current-context)"
+    fi
 
     install_tekton
     install_shipwright

@@ -51,7 +51,6 @@ Installs a **fake** OpenShift BuildConfig CRD on non-OpenShift clusters (like Mi
 ```
 
 **Options:**
-- `--uninstall` - Remove the BuildConfig CRD
 - `--verify` - Verify CRD installation
 
 **Examples:**
@@ -61,9 +60,6 @@ Installs a **fake** OpenShift BuildConfig CRD on non-OpenShift clusters (like Mi
 
 # Verify installation
 ./hack/fake-minikube-buildconfig.sh --verify
-
-# Uninstall
-./hack/fake-minikube-buildconfig.sh --uninstall
 ```
 
 This allows you to create BuildConfig CR objects on Minikube (without any build functionality) and test the crane plugin transformation pipeline that converts them to Shipwright Build resources.
@@ -82,6 +78,7 @@ Creates a Minikube cluster with Shipwright Build for testing.
 - `--k8s-version VERSION` - Kubernetes version (default: `v1.34.10`, required: v1.34+ for Shipwright v0.20.11)
 - `--cpus N` - CPU count (default: `4`)
 - `--memory MB` - Memory in MB (default: `8192`)
+- `--driver DRIVER` - Minikube driver (default: auto-detect)
 - `--shipwright-version VER` - Shipwright version (default: `v0.20.11`)
 - `--skip-cluster-create` - Only install Shipwright, don't create cluster
 
@@ -215,10 +212,11 @@ kubectl config current-context
 All scripts support environment variables as an alternative to CLI flags:
 
 ```bash
-# Example: customize resources
+# Example: customize resources and versions
 export K8S_VERSION=v1.34.10
 export CPUS=6
 export MEMORY=16384
+export TEKTON_VERSION=v1.15.0
 export SHIPWRIGHT_VERSION=v0.20.11
 ./hack/setup-minikube-shipwright.sh
 ```

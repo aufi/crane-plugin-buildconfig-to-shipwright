@@ -40,7 +40,7 @@ jobs:
           crane version
 
       - name: Setup Minikube
-        uses: medyagh/setup-minikube@e54c6bfce85fe75714fc113f1fa200c23338732b # latest from 2026-08-20
+        uses: medyagh/setup-minikube@e9e035a86bbc3caea26a450bd4dbf9d0c453682e # v0.0.21
         with:
           kubernetes-version: v1.34.10
           cpus: '4'
@@ -110,7 +110,7 @@ jobs:
           kubectl logs -n tekton-pipelines -l app=tekton-pipelines-controller --tail=100 || true
 
           echo "=== Shipwright controller logs ==="
-          kubectl logs -n shipwright-build -l control-plane=shipwright-build-controller --tail=100 || true
+          kubectl logs -n shipwright-build deployment/shipwright-build-controller --tail=100 || true
 
           echo "=== All pods status ==="
           kubectl get pods --all-namespaces || true

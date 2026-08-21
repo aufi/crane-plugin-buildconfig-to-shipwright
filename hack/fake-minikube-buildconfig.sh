@@ -12,13 +12,11 @@
 #   ./hack/fake-minikube-buildconfig.sh [OPTIONS]
 #
 # Options:
-#   --uninstall    Remove the BuildConfig CRD
 #   --verify       Verify CRD installation
 #   --help         Show this help
 #
 set -euo pipefail
 
-UNINSTALL=false
 VERIFY_ONLY=false
 
 log() { echo "==> $*"; }
@@ -42,10 +40,6 @@ check_prereqs() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --uninstall)
-                UNINSTALL=true
-                shift
-                ;;
             --verify)
                 VERIFY_ONLY=true
                 shift
@@ -133,30 +127,6 @@ EOF
     log "Fake BuildConfig CRD installed successfully (CRD only, no build functionality)"
 }
 
-uninstall_crd() {
-    log "Uninstalling OpenShift BuildConfig CRD..."
-
-    if ! kubectl get crd buildconfigs.build.openshift.io &>/dev/null; then
-        log "BuildConfig CRD not found, nothing to uninstall"
-        return 0
-    fi
-
-    # Warn about existing BuildConfig resources
-    local bc_count=$(kubectl get buildconfigs --all-namespaces --no-headers 2>/dev/null | wc -l)
-    if [ "$bc_count" -gt 0 ]; then
-        log "WARNING: Found $bc_count BuildConfig resources in the cluster"
-        read -p "Delete CRD and all BuildConfig resources? (y/N): " -r
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log "Uninstall cancelled"
-            return 0
-        fi
-    fi
-
-    kubectl delete crd buildconfigs.build.openshift.io
-
-    log "BuildConfig CRD uninstalled"
-}
-
 print_usage_example() {
     log ""
     log "Example BuildConfig resource:"
@@ -193,13 +163,11 @@ main() {
     check_prereqs
 
     if [ "$VERIFY_ONLY" = true ]; then
-        verify_crd
-        exit $?
-    fi
-
-    if [ "$UNINSTALL" = true ]; then
-        uninstall_crd
-        exit 0
+        if verify_crd; then
+            exit 0
+        else
+            exit 1
+        fi
     fi
 
     install_crd
