@@ -1,6 +1,6 @@
 ---
 name: setup-repos
-description: Create or update repo.md with local repository paths for the BuildConfig-to-Shipwright migration repos. Use when repo.md is missing or a new repo is added. Auto-invoked by /tech-design when repo.md is not found.
+description: Create or update repo.md with local repository paths for the BuildConfig-to-Shipwright migration repos, and report which optional review tools are installed. Use when repo.md is missing, a new repo is added, or a skill reports a missing tool. Auto-invoked by /tech-design and /tech-review when repo.md is not found.
 argument-hint: [update]
 allowed-tools: [Bash, Read, Write, Edit, AskUserQuestion]
 user_invocable: true
@@ -48,6 +48,25 @@ prior-art archive only and is never a PR target. Leaving it unset is fine.
 
 These four are checked on the web and are never cloned, so they need no path:
 `containers/buildah`, `openshift/source-to-image`, `openshift/api`, `tektoncd/pipeline`.
+
+## Tooling
+
+`/tech-review` runs several reviewers. Two are built into Claude Code and are always
+there. The rest are optional: when one is absent that reviewer is skipped and the review
+says so, rather than failing.
+
+| Tool | Kind | Required | Used by |
+|-------|------|----------|---------|
+| `/code-review` | Built into Claude Code | yes | `/tech-review` |
+| `/simplify` | Built into Claude Code | yes | `/tech-review` |
+| `coderabbit` | External CLI | no | `/tech-review` |
+| `qodo` | External CLI, `@qodo/command` | no | `/tech-review` |
+| `compound-engineering` | Claude Code plugin | no | `/tech-review` escalation |
+
+Tool availability is **not** stored in `repo.md`. Paths are stable for the life of a
+clone; an install happens in one command and changes without warning. `repo.md` holds
+paths only, and each skill probes for tools when it runs. What this skill gives you is
+the onboarding picture: what is here, what is not, and what each absence costs.
 
 ## Step 1: Check existing repo.md
 
@@ -146,9 +165,46 @@ the user may have edited a path by hand on purpose.
 
 Report what was added, or say plainly that nothing was missing.
 
+## Step 5: Report tooling
+
+Run this in both setup modes — including manual — and on `update`.
+
+```bash
+for tool in coderabbit qodo; do
+  if command -v "$tool" >/dev/null; then
+    echo "$tool: $(command -v "$tool")"
+  else
+    echo "$tool: not installed (optional)"
+  fi
+done
+```
+
+Report each result, and for anything missing say which reviewer it disables so the user
+can judge whether they care. Two optional CLIs absent is a working setup, not a broken
+one.
+
+**Do not print an install command you have not verified.** Both CLIs are third-party and
+their install methods change; a stale command wastes more time than no command. Name the
+tool and let the user get it from its vendor.
+
+Three tools cannot be probed from the shell, and should not be:
+
+- `/code-review` and `/simplify` are built into Claude Code. They have no files on disk.
+- The `compound-engineering` plugin does have files, under `~/.claude/plugins/`, but that
+  path is version-stamped, is Claude Code internals, and tells you only that the plugin
+  was downloaded — not that it is enabled. Looking there gives a confident wrong answer.
+
+Skills report their own availability when something tries to use them. Say in the report
+that these three are checked at run time, and move on.
+
+Write nothing from this step into `repo.md`.
+
 ## Never do these
 
 - Never write an absolute path into any committed file. `repo.md` only.
 - Never add `repo.md` to git. It is gitignored; do not force-add it.
 - Never write a `/path/to/...` placeholder into a real `repo.md`.
 - Never infer a path from a directory name. Confirm with the `origin` remote.
+- Never record tool availability in `repo.md`. It is stale the moment someone installs
+  something, and a stale "absent" makes a working tool look missing.
+- Never print an install command you have not verified against the tool itself.
