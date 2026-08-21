@@ -4,8 +4,6 @@ This directory contains scripts for setting up development and E2E testing envir
 
 ## Prerequisites
 
-### Common Prerequisites
-
 - **[crane CLI](https://github.com/konveyor/crane)** - Required for transform and apply operations
   
   **Installation:**
@@ -22,20 +20,9 @@ This directory contains scripts for setting up development and E2E testing envir
   ```
 
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
-
-### For Minikube with Shipwright
-
 - [minikube](https://minikube.sigs.k8s.io/docs/start/)
 
-### For OpenShift with OpenShift Builds
-
-- [oc (OpenShift CLI)](https://docs.openshift.com/container-platform/latest/cli_reference/openshift_cli/getting-started-cli.html)
-- Access to an OpenShift cluster (4.12+)
-  - For local development: [OpenShift Local](https://console.redhat.com/openshift/create/local)
-
 ## Quick Start
-
-### Option 1: Minikube with Shipwright
 
 ```bash
 # Setup a local Minikube cluster with Shipwright Build
@@ -48,27 +35,6 @@ This directory contains scripts for setting up development and E2E testing envir
 # - Shipwright Build v0.20.11
 # - Default ClusterBuildStrategies (buildah, source-to-image, etc.)
 # - Local registry addon
-```
-
-### Option 2: OpenShift with OpenShift Builds
-
-```bash
-# First, install OpenShift Local if you don't have a cluster:
-# https://console.redhat.com/openshift/create/local
-
-# Login to your OpenShift cluster
-oc login --server=https://api.your-cluster.com:6443
-
-# Setup namespace and install OpenShift Builds
-./hack/setup-openshift-builds.sh
-
-# This creates:
-# - Namespace "my-app"
-# - Kubectl context "openshift"
-# - OpenShift Pipelines Operator (prerequisite for Builds)
-# - OpenShift Builds Operator (or Shipwright as fallback)
-# - ClusterBuildStrategies
-# - ServiceAccount with necessary permissions
 ```
 
 ## Script Reference
@@ -126,7 +92,6 @@ Creates a Minikube cluster with Shipwright Build for testing.
 
 # Custom configuration
 ./hack/setup-minikube-shipwright.sh \
-  --cluster-name my-cluster \
   --cpus 6 \
   --memory 16384 \
   --k8s-version v1.34.10
@@ -135,65 +100,12 @@ Creates a Minikube cluster with Shipwright Build for testing.
 ./hack/setup-minikube-shipwright.sh --skip-cluster-create
 ```
 
-### `setup-openshift-builds.sh`
+## Cleanup
 
-Sets up OpenShift Builds (or Shipwright) on an OpenShift cluster.
+To remove the Minikube cluster:
 
-**Usage:**
 ```bash
-./hack/setup-openshift-builds.sh [OPTIONS]
-```
-
-**Common Options:**
-- `--namespace NAME` - Target namespace (default: `my-app`)
-- `--context-name NAME` - Kubectl context name (default: `openshift`)
-- `--operator-version VER` - OpenShift Builds Operator version (default: `latest`)
-- `--skip-namespace-create` - Skip namespace creation
-- `--skip-operator-install` - Only setup namespace, skip operator
-- `--skip-context-rename` - Skip renaming kubectl context
-
-**Examples:**
-```bash
-# Default setup
-./hack/setup-openshift-builds.sh
-
-# Custom namespace and context
-./hack/setup-openshift-builds.sh --namespace my-custom-app --context-name my-openshift
-
-# Only create and configure namespace, keep original context name
-./hack/setup-openshift-builds.sh --skip-operator-install --skip-context-rename
-```
-
-### `cleanup-env.sh`
-
-Cleans up development/test environments.
-
-**Usage:**
-```bash
-./hack/cleanup-env.sh [OPTIONS]
-```
-
-**Options:**
-- `--minikube` - Delete minikube cluster
-- `--openshift` - Delete OpenShift namespace
-- `--all` - Cleanup both environments
-- `--cluster-name NAME` - Minikube cluster name (default: `minikube-shipwright`)
-- `--namespace NAME` - OpenShift namespace (default: `my-app`)
-
-**Examples:**
-```bash
-# Cleanup minikube cluster
-./hack/cleanup-env.sh --minikube
-
-# Cleanup OpenShift namespace
-./hack/cleanup-env.sh --openshift
-
-# Cleanup everything
-./hack/cleanup-env.sh --all
-
-# Cleanup custom named resources
-./hack/cleanup-env.sh --minikube --cluster-name my-cluster
-./hack/cleanup-env.sh --openshift --namespace my-custom-app
+minikube delete -p minikube-shipwright
 ```
 
 ## Testing the Plugin
@@ -234,26 +146,6 @@ crane transform \
 
 # Apply to cluster
 kubectl apply -f /tmp/transform/resources/
-```
-
-#### OpenShift
-```bash
-# Set context (context name: openshift)
-kubectl config use-context openshift
-oc project my-app
-
-# Build plugin
-go build -o /tmp/plugins/crane-plugin-buildconfig-to-shipwright .
-
-# Transform test data
-crane transform \
-  --export-dir ./tests/testdata/export \
-  --transform-dir /tmp/transform \
-  --plugin-dir /tmp/plugins \
-  --optional-flags "registry-mapping=image-registry.openshift-image-registry.svc:5000=image-registry.openshift-image-registry.svc:5000"
-
-# Apply to cluster
-oc apply -f /tmp/transform/resources/
 ```
 
 ### 4. Verify Build Resources
@@ -302,32 +194,6 @@ minikube addons list -p minikube-shipwright
 minikube addons enable registry -p minikube-shipwright
 ```
 
-### OpenShift Issues
-
-**Operator installation fails:**
-```bash
-# Check if you have cluster-admin permissions
-oc auth can-i '*' '*'
-
-# View operator logs
-oc logs -n openshift-operators deployment/openshift-builds-operator
-```
-
-**Build fails with permission errors:**
-```bash
-# Grant privileged SCC to builder SA
-oc adm policy add-scc-to-user privileged -z builder -n my-app
-```
-
-**Cannot push to internal registry:**
-```bash
-# Verify registry route exists
-oc get route default-route -n openshift-image-registry
-
-# Create if missing
-oc patch configs.imageregistry.operator.openshift.io/cluster \
-  --type merge -p '{"spec":{"defaultRoute":true}}'
-```
 
 ## Kubectl Contexts
 
@@ -340,9 +206,6 @@ kubectl config get-contexts
 # Switch to minikube
 kubectl config use-context minikube-shipwright
 
-# Switch to OpenShift
-kubectl config use-context openshift
-
 # View current context
 kubectl config current-context
 ```
@@ -352,24 +215,16 @@ kubectl config current-context
 All scripts support environment variables as an alternative to CLI flags:
 
 ```bash
-# Minikube
-export CLUSTER_NAME=my-cluster
-export K8S_VERSION=v1.30.0
+# Example: customize resources
+export K8S_VERSION=v1.34.10
 export CPUS=6
 export MEMORY=16384
 export SHIPWRIGHT_VERSION=v0.20.11
 ./hack/setup-minikube-shipwright.sh
-
-# OpenShift
-export NAMESPACE=my-namespace
-export CONTEXT_NAME=openshift
-export OPERATOR_VERSION=latest
-./hack/setup-openshift-builds.sh
 ```
 
 ## Related Documentation
 
 - [Shipwright Build Documentation](https://shipwright.io/docs/)
 - [Tekton Documentation](https://tekton.dev/docs/)
-- [OpenShift Builds](https://docs.openshift.com/container-platform/latest/cicd/builds/understanding-builds.html)
 - [crane CLI](https://github.com/konveyor/crane)

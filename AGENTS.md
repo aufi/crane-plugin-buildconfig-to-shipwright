@@ -57,7 +57,7 @@ Tests the plugin binary with crane, processing input YAMLs and asserting output 
 ```
 
 ### 3. Cluster E2E Tests
-Full end-to-end validation on real clusters (Minikube or OpenShift). See [`hack/README.md`](hack/README.md) for detailed setup instructions and troubleshooting and ['.github/workflows/test-e2e-minikube-pr.yml'](.github/workflows/test-e2e-minikube-pr.yml) for example test flow.
+Full end-to-end validation on real Minikube clusters. See [`hack/README.md`](hack/README.md) for detailed setup instructions and troubleshooting and [`.github/workflows/test-e2e-minikube-pr.yml`](.github/workflows/test-e2e-minikube-pr.yml) for example test flow.
 
 **CI/CD:**
 
