@@ -128,6 +128,9 @@ git -C "$CP" for-each-ref --format='%(refname:short)' refs/heads refs/remotes \
 # Three dots, not two: `A..B` is a plain endpoint diff, so a branch that is merely
 # behind main reports main's own content as a removal and matches every keyword.
 # `A...B` diffs from the merge base and shows only what the branch itself added.
+# Note: `2>/dev/null` also hides a real "unknown revision" (e.g. a force-pushed branch
+# whose merge base was GC'd), which then reads as "no work found". If a branch you expect
+# to match comes back empty, re-run its diff without `2>/dev/null` to tell the two apart.
 git -C "$CP" for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin \
   | grep -vE '^(main|origin/main|origin/HEAD)$' | sort -u \
   | while read -r branch; do
@@ -289,6 +292,10 @@ git -C "$WT" rebase origin/main
    For a stacked branch, restack on the parent's **current** tip — a stale stack silently
    drops the parent's later fixes.
 
+   If the rebase reports conflicts, **stop**. Do not commit or push a worktree that holds
+   conflict markers. Either resolve them and `git -C "$WT" rebase --continue`, or
+   `git -C "$WT" rebase --abort` and surface the conflict to the user for a decision.
+
 3. Commit only your own paths. A shared index can hold another session's staged files, and a
    bare `git add .` would sweep them into your commit:
 
@@ -318,8 +325,14 @@ git -C "$WT" push <fork-remote> "BUILD-XXXX-<slug>:BUILD-XXXX-<slug>"
 ```
 
    Never push to `origin`. Never plain force-push: use `--force-with-lease`, and first
-   preserve the fork's existing tip as a tag `archive/<fork-remote>-old-BUILD-XXXX-<slug>`
-   and push that tag.
+   preserve the fork's existing tip as a tag and **push the tag before the branch**, so the
+   old tip is recoverable by anyone, not just locally:
+
+```bash
+git -C "$WT" tag "archive/<fork-remote>-old-BUILD-XXXX-<slug>" <fork-remote>/BUILD-XXXX-<slug>
+git -C "$WT" push <fork-remote> "archive/<fork-remote>-old-BUILD-XXXX-<slug>"
+git -C "$WT" push --force-with-lease <fork-remote> "BUILD-XXXX-<slug>:BUILD-XXXX-<slug>"
+```
 
 ## Phase 7: Update Tracker & Jira
 
