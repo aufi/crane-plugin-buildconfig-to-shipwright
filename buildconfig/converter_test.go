@@ -1582,6 +1582,181 @@ func TestProcessSuccessfulBuildsHistoryLimit(t *testing.T) {
 	}
 }
 
+func TestProcessFailedBuildsHistoryLimit(t *testing.T) {
+	uintPtr := func(v uint) *uint { return &v }
+	int32Ptr := func(v int32) *int32 { return &v }
+
+	tests := []struct {
+		name           string
+		limit          *int32
+		preexisting    *shipwrightv1beta1.BuildRetention
+		expectedFailed *uint
+		expectWarning  bool
+	}{
+		{
+			name:  "failedBuildsHistoryLimit unset leaves retention nil",
+			limit: nil,
+		},
+		{
+			name:           "lower CRD boundary 1 maps to retention.failedLimit",
+			limit:          int32Ptr(1),
+			expectedFailed: uintPtr(1),
+		},
+		{
+			name:           "typical value maps to retention.failedLimit",
+			limit:          int32Ptr(5),
+			expectedFailed: uintPtr(5),
+		},
+		{
+			name:           "upper CRD boundary 10000 maps to retention.failedLimit",
+			limit:          int32Ptr(10000),
+			expectedFailed: uintPtr(10000),
+		},
+		{
+			name:          "zero is warned and dropped (Shipwright CRD Minimum=1)",
+			limit:         int32Ptr(0),
+			expectWarning: true,
+		},
+		{
+			name:          "negative value is warned and dropped",
+			limit:         int32Ptr(-1),
+			expectWarning: true,
+		},
+		{
+			name:          "value above CRD Maximum 10000 is warned and dropped",
+			limit:         int32Ptr(10001),
+			expectWarning: true,
+		},
+		{
+			name:           "pre-existing retention block is updated, not replaced",
+			limit:          int32Ptr(5),
+			preexisting:    &shipwrightv1beta1.BuildRetention{SucceededLimit: uintPtr(3)},
+			expectedFailed: uintPtr(5),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, hook := logrustest.NewNullLogger()
+			c := &Converter{Log: logger}
+			bc := &buildv1.BuildConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "history-app",
+					Namespace: "default",
+				},
+				Spec: buildv1.BuildConfigSpec{
+					FailedBuildsHistoryLimit: tt.limit,
+				},
+			}
+			b := &shipwrightv1beta1.Build{}
+			if tt.preexisting != nil {
+				b.Spec.Retention = tt.preexisting
+			}
+
+			c.processFailedBuildsHistoryLimit(bc, b)
+
+			var warnings []string
+			for _, entry := range hook.AllEntries() {
+				if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "failedBuildsHistoryLimit") {
+					warnings = append(warnings, entry.Message)
+				}
+			}
+			if tt.expectWarning {
+				if len(warnings) != 1 {
+					t.Fatalf("expected exactly 1 warning, got %d: %v", len(warnings), warnings)
+				}
+				if !strings.Contains(warnings[0], "history-app") {
+					t.Errorf("warning does not name the BuildConfig: %q", warnings[0])
+				}
+			} else if len(warnings) != 0 {
+				t.Fatalf("expected no warnings, got: %v", warnings)
+			}
+
+			if tt.expectedFailed == nil {
+				if tt.preexisting == nil && b.Spec.Retention != nil {
+					t.Fatalf("expected retention to stay nil, got %+v", b.Spec.Retention)
+				}
+				if b.Spec.Retention != nil && b.Spec.Retention.FailedLimit != nil {
+					t.Fatalf("expected failedLimit to stay unset, got %d", *b.Spec.Retention.FailedLimit)
+				}
+				return
+			}
+			if b.Spec.Retention == nil || b.Spec.Retention.FailedLimit == nil {
+				t.Fatalf("expected retention.failedLimit to be set, got %+v", b.Spec.Retention)
+			}
+			if *b.Spec.Retention.FailedLimit != *tt.expectedFailed {
+				t.Errorf("failedLimit = %d, want %d", *b.Spec.Retention.FailedLimit, *tt.expectedFailed)
+			}
+			if tt.preexisting != nil {
+				if b.Spec.Retention != tt.preexisting {
+					t.Error("pre-existing retention block was replaced instead of updated")
+				}
+				if b.Spec.Retention.SucceededLimit == nil || *b.Spec.Retention.SucceededLimit != 3 {
+					t.Errorf("pre-existing succeededLimit was clobbered: %+v", b.Spec.Retention.SucceededLimit)
+				}
+			}
+		})
+	}
+}
+
+// TestConvertMapsFailedBuildsHistoryLimit is an end-to-end guard that the
+// failedBuildsHistoryLimit mapping is actually wired into Convert(): the table
+// test above calls processFailedBuildsHistoryLimit directly and so cannot catch
+// a missing call site.
+func TestConvertMapsFailedBuildsHistoryLimit(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "myapp-build",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"failedBuildsHistoryLimit": int64(4),
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri": "https://github.com/example/myapp.git",
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type": "Docker",
+					"dockerStrategy": map[string]interface{}{
+						"dockerfilePath": "Dockerfile",
+					},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.NewResources) < 1 {
+		t.Fatal("expected at least 1 new resource")
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	if b.Spec.Retention == nil || b.Spec.Retention.FailedLimit == nil {
+		t.Fatalf("expected retention.failedLimit to be set end-to-end, got %+v", b.Spec.Retention)
+	}
+	if *b.Spec.Retention.FailedLimit != 4 {
+		t.Errorf("failedLimit = %d, want 4", *b.Spec.Retention.FailedLimit)
+	}
+}
+
 func TestConvertNoOutputImage(t *testing.T) {
 	tests := []struct {
 		name   string
