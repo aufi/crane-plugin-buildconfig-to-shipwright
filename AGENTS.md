@@ -38,6 +38,18 @@ GOTOOLCHAIN=auto go build -o crane-plugin-buildconfig-to-shipwright .
 
 Requires Go 1.26+ (forced by transitive dependencies). The pinned crane-lib pseudo-version (`v0.1.6-0.20260807130033-222a325c7cee`) provides the unreleased `NewResources` API — update this when crane-lib publishes a new release.
 
+## Development tools (`hack/`)
+
+The `hack/` directory contains development and testing utility scripts for setting up E2E test environments. These are **developer tools**, not production-grade end-user programs. They prioritize simplicity and iteration speed over comprehensive error handling, input validation, and edge-case coverage.
+
+When working with `hack/` scripts:
+- Expect them to be opinionated and narrowly scoped for their specific use case (e.g., setting up Minikube with Shipwright)
+- They may fail fast rather than gracefully handle all error conditions
+- They are designed for developers who understand the underlying tools (kubectl, minikube, etc.)
+- User-facing documentation in `hack/README.md` provides usage examples, but the scripts themselves are not hardened against all misuse scenarios
+
+This is intentional — `hack/` scripts trade robustness for maintainability and developer velocity. For production cluster setup, users should follow upstream documentation for Kubernetes, Tekton, and Shipwright.
+
 ## Testing
 
 The project uses a three-level testing strategy:
