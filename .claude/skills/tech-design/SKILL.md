@@ -28,7 +28,7 @@ Parse the argument:
 
 - Do NOT assign priority until all research phases are complete
 - Do NOT skip the strategy-catalog check — upstream and downstream strategies diverge
-- Do NOT claim "not implemented" without checking unmerged branches — WIP code may exist
+- Do NOT claim "not implemented" without checking TRACKER, merged code, and open PRs — the work may already exist or be in flight (see **Phase 5**)
 - Do NOT write anything until the user approves — see **Phase 9**
 - Every claim must cite a specific `file:line` or search result — no guessing
 
@@ -87,8 +87,9 @@ Throughout this skill, `<Label>` means the path stored under that label in `repo
 | Crane Repo | CLI convert subcommand |
 | Crane Lib Repo | **Legacy, frozen.** Prior-art archive only, never a PR target |
 
-The conversion code moved out of crane-lib on 2026-08-13. crane-lib is read for prior art
-and nothing else. Any new conversion work belongs in the Crane Plugin Repo.
+The conversion code moved out of crane-lib on 2026-08-13; any new conversion work belongs
+in the Crane Plugin Repo. crane-lib prior art is trusted to be captured in TRACKER as a
+story when it needs porting, so this skill no longer scans crane-lib directly.
 
 The operator's `config/shipwright/build/strategy/*.yaml` files are **generated** by
 `make strategy-catalog`, which pulls from the Strategy Catalog Repo. Never hand-edit them,
@@ -157,13 +158,7 @@ else
 fi
 ```
 
-4. List unmerged branches in the **Crane Plugin Repo** — this is where active work lives:
-
-```bash
-git -C "<Crane Plugin Repo>" branch -a 2>&1 | grep -i "ship\|convert\|build\|migrat\|docker"
-```
-
-5. Read the RFE and warning tracking, which lives inline in the converter:
+4. Read the RFE and warning tracking, which lives inline in the converter:
 
 ```bash
 grep -n "RFE\|WARN\|warning" "<Crane Plugin Repo>/buildconfig/converter.go" | head -40
@@ -175,7 +170,7 @@ comparison below reads `origin/main` directly, so nothing needs to be checked ou
 Report any repo that is not on `main` or is behind, and let the user decide whether to
 update it. Never run `checkout`, `pull`, `merge` or `reset` on the user's clones.
 
-Present a summary of what was found (branch count, RFE list) before proceeding.
+Present a summary of what was found (RFE list) before proceeding.
 
 ### Phase 1: Read the Issue
 
@@ -304,11 +299,25 @@ story is a BLOCKING gap — the issue cannot be triaged DONE until the row is di
 _(Origin: Audit 1 §3 — six P1 silent drops with no story, because scope was walked
 per-source-field and never per-destination-outcome.)_
 
-### Phase 5: Crane Plugin Check
+### Phase 5: Has this already been done?
 
-**5a. Primary — the Crane Plugin Repo**
+Answer one question — *is this feature already delivered, or in flight right now?* —
+from the tracked sources of truth, checked cheapest and most reliable first. Stop at the
+first hit. Do not crawl every branch: if work is real, it is recorded as a Jira story /
+TRACKER row or an open PR. Trust that.
 
-This is where the conversion code lives and where any PR goes.
+**5a. TRACKER.md — the master record**
+
+Every dispositioned feature has a row here (story ↔ branch ↔ design). If a row already
+covers this feature, report the existing story and stop.
+
+```bash
+grep -in "<feature-keyword>\|<ISSUE-KEY>" "<Designs Directory>/TRACKER.md"
+```
+
+**5b. Merged code — is it already in `main`?**
+
+The conversion code lives in the Crane Plugin Repo, and this is where any PR goes.
 
 ```bash
 CP="<Crane Plugin Repo>"
@@ -316,49 +325,15 @@ grep -n -B3 -A10 "<feature-keyword>" "$CP/buildconfig/converter.go"
 grep -rn "<ISSUE-KEY>\|<feature-keyword>" "$CP/buildconfig/"
 ```
 
-Search every unmerged branch for work in progress:
+**5c. Open PRs — is it in flight?**
 
 ```bash
-cd "<Crane Plugin Repo>"
-# --no-ext-diff: the repo's ext diff driver defeats grep-over-diff (Audit 3, BUILD-2275 false negative).
-# origin/main: a stale local main misattributes merged work (retro 2026-07-27, BUILD-1607).
-git fetch origin --quiet
-# for-each-ref, not `git branch`: include remote branches (a fresh clone has no local
-# ones) and match main exactly, so a branch like `fix-main-parsing` is not skipped.
-git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin \
-  | grep -vE '^(main|origin/main|origin/HEAD)$' | sort -u \
-  | while read -r branch; do
-      result=$(git diff --no-ext-diff origin/main.."$branch" -- buildconfig/ 2>/dev/null | grep -i "<feature-keyword>")
-      [ -n "$result" ] && { echo "=== $branch ==="; echo "$result"; }
-    done
+cd "<Crane Plugin Repo>"   # gh resolves the repo from its origin remote
+gh pr list --state open --search "<feature-keyword>"
+gh pr list --state open --search "<ISSUE-KEY>"
 ```
 
-This answers: is the feature already built, or in flight right now?
-
-**5b. Secondary — the Crane Lib Repo, legacy archive**
-
-crane-lib is frozen. Code found here is **prior art to port**, never current state, and
-never a PR target. Present it that way or it will be mistaken for working functionality.
-
-```bash
-cd "<Crane Lib Repo>"
-git fetch origin --quiet
-git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin \
-  | grep -vE '^(main|origin/main|origin/HEAD)$' | sort -u \
-  | while read -r branch; do
-      result=$(git diff --no-ext-diff origin/main.."$branch" -- convert/ 2>/dev/null | grep -i "<feature-keyword>")
-      [ -n "$result" ] && { echo "=== ARCHIVE $branch ==="; echo "$result"; }
-    done
-```
-
-If `Crane Lib Repo` is unset in `repo.md` or the path is missing, skip this step and record
-it as SKIPPED in the Compliance Report. Do not fail.
-
-**5c. Red flag detection**
-
-If an unmerged branch removes a warning without implementing the feature, flag it:
-"WARNING: Branch `<name>` silently drops the <feature> warning. If merged, users migrating
-BuildConfigs with <feature> will get silent data loss."
+If all three come up empty, the feature is not started — triage it as new.
 
 ### Phase 6: Feasibility & Necessity (Premise Challenge)
 
@@ -475,8 +450,9 @@ kebab-case (e.g. `BUILD-1578-no-cache-buildah-strategy.md`).
 ### Crane Plugin Status
 - Current handling: <warning/partial/none> (confidence: N/10)
 - File: <file:line reference>
-- Unmerged branches: <status>
-- crane-lib prior art: <none / branch names, to port>
+- TRACKER row: <story:BUILD-XXXX / none>
+- Merged in main: <yes/no>
+- Open PR: <PR # / none>
 - Risk flags: <silent data loss warnings or none>
 
 ## Feasibility & Necessity
