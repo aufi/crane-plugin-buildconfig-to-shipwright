@@ -148,7 +148,7 @@ Present a summary: "Implementing BUILD-XXXX. Design doc says: [summary]. Existin
 
 ## Story Point & Estimation Scale
 
-Used when updating the tracker. If the design doc disagrees, reconcile during implementation.
+Used when setting Jira story points. If the design doc disagrees, reconcile during implementation.
 
 | Points | Complexity | Est. Days | When to use |
 |--------|-----------|-----------|-------------|
@@ -334,39 +334,42 @@ git -C "$WT" push <fork-remote> "archive/<fork-remote>-old-BUILD-XXXX-<slug>"
 git -C "$WT" push --force-with-lease <fork-remote> "BUILD-XXXX-<slug>:BUILD-XXXX-<slug>"
 ```
 
-## Phase 7: Update Tracker & Jira
+## Phase 7: Update Jira
 
-### Tracker
+Jira is the single source of truth. Record the change there directly.
 
-Update `<Designs Directory>/TRACKER.md`:
+### Evidence gate — no exceptions
 
-- **Status** — gated, no exceptions:
-  - `Implemented & Tested` only if `<Designs Directory>/test-results/BUILD-XXXX-results.md`
-    exists and contains (a) the exact test commands, (b) pasted raw output, (c) exit code 0,
-    (d) the branch HEAD SHA tested, and — for cluster-observable behaviour — (e) cluster
-    evidence such as `oc` output or BuildRun status. Confirm the SHA is the current tip with
-    `git -C "$WT" rev-parse HEAD`.
-  - `Implemented, evidence pending` if any element above is missing.
-  - Never mark tested on the strength of a narrative.
-- **Branch** — `<fork-remote>:BUILD-XXXX-<slug> (<repo-name>)`. List each repo when the
-  change spans several.
-- **Points** and **Est. Days** if they changed.
-- Summary section totals.
+Whether you may claim the work is tested is gated on evidence:
 
-**Read back, mandatory.** Re-read the row from the same configured file that was just
-written — not a bare `TRACKER.md`, which may resolve elsewhere or nowhere:
+- Claim it tested (in the comment, and when transitioning the issue toward a review/done
+  state) only if `<Designs Directory>/test-results/BUILD-XXXX-results.md` exists and
+  contains (a) the exact test commands, (b) pasted raw output, (c) exit code 0, (d) the
+  branch HEAD SHA tested, and — for cluster-observable behaviour — (e) cluster evidence
+  such as `oc` output or BuildRun status.
+- Compare the SHA recorded in the results file against the current tip, and fail the gate
+  when they differ — a stale results file must not vouch for an untested commit:
 
 ```bash
-grep -n "BUILD-XXXX" "<Designs Directory>/TRACKER.md"
+recorded="$(grep -oiE '[0-9a-f]{7,40}' "<Designs Directory>/test-results/BUILD-XXXX-results.md" | tail -1)"
+current="$(git -C "$WT" rev-parse HEAD)"
+[ -n "$recorded" ] && [ "$current" = "$recorded" ] || { echo "results file SHA ($recorded) != current tip ($current) — treat as untested"; }
 ```
 
-Confirm Status, Points and Branch match what you wrote.
+- If any element above is missing, or the SHAs differ, say "implemented, evidence pending"
+  in the comment and leave the issue in progress rather than moving it to review/done.
+- Never claim tested on the strength of a narrative.
 
-### Jira
+### Jira write
 
-- Post a comment summarising the change and the test results. Pass the approved text through
-  stdin — never interpolate it into the shell command, where backticks or `$(...)` in the
-  text would be executed instead of posted:
+Every action below mutates Jira. Show the user the exact list — comment text, attachment,
+status transition, and story points — and get one explicit approval before running any of
+them. Skip any the user declines.
+
+- Post a comment summarising the change and the test results, including the branch
+  (`<fork-remote>:BUILD-XXXX-<slug> (<repo-name>)`, one line per repo when the change spans
+  several). Pass the approved text through stdin — never interpolate it into the shell
+  command, where backticks or `$(...)` in the text would be executed instead of posted:
 
 ```bash
 printf '%s\n' "$APPROVED_COMMENT" | jira issue comment add BUILD-XXXX --template - --no-input
@@ -374,8 +377,7 @@ printf '%s\n' "$APPROVED_COMMENT" | jira issue comment add BUILD-XXXX --template
 
 - Attach the updated design doc. Reference it by **filename** in any comment; an absolute
   local path discloses the author's home directory and is useless to everyone else.
-- Transition the issue to match the TRACKER status, with user approval. TRACKER and Jira
-  must never diverge.
+- Transition the issue to match the evidence gate above.
 - Write and verify story points via jira-cli (`customfield_10028`). Raw REST reads return
   obfuscated data.
 - Read back with `jira issue view BUILD-XXXX` and confirm status and points before printing
@@ -393,8 +395,7 @@ Tests:
   - Unit:    X/Y passed — results: test-results/BUILD-XXXX-results.md @ <HEAD SHA>
   - Cluster: <PASS/FAIL/N-A> — evidence: <section of the results file>
 
-Tracker: updated and read back
-Jira:    comment added, attachment replaced, status <state>
+Jira:    comment added, attachment replaced, status <state>, points set and read back
 PR:      <not created yet / link>
 ```
 
@@ -424,8 +425,8 @@ The body states what the change does and why, in terms a reviewer with no prior 
 follow. It covers the change, the testing evidence, and a Jira link. Do not narrate the
 project's internal history.
 
-Then set the tracker Status to `PR Created`, add the PR link to the tracker row, and add the
-PR link as a Jira remote link and comment.
+Then, with one explicit user approval covering all of it, transition the issue to reflect
+that the PR is open and add the PR link as a Jira remote link and comment.
 
 ## Compliance Report (MANDATORY — always emit, even on early exit)
 
@@ -438,14 +439,14 @@ PR link as a Jira remote link and comment.
 | 4 review | ✅ / ⏭️ SKIPPED (reason) | |
 | 5 /tech-test | ✅ / ⏭️ SKIPPED (reason) | |
 | 6 rebase + push to fork | ✅ / ❌ | ahead/behind vs origin/main; `show --name-only` output |
-| 7 tracker status gate + Jira sync | ✅ / ❌ | read-back output |
+| 7 Jira evidence gate + write-back | ✅ / ❌ | read-back output |
 
 The banner may not be printed while any row is ❌ or unexplained.
 
 ## Completion Status
 
 End with one of:
-- **DONE** — implemented, tested with evidence, pushed, tracker and Jira updated
+- **DONE** — implemented, tested with evidence, pushed, Jira updated
 - **DONE_WITH_CONCERNS** — complete but with gaps; list them
 - **BLOCKED** — cannot proceed; state what is missing
 - **NEEDS_CONTEXT** — needs user or team input on specific questions
