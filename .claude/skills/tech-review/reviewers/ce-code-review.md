@@ -57,8 +57,16 @@ API contracts, data migrations, and the always-on correctness and testing person
    - `P2`, `medium` → `warning`
    - `P3`, `low`, `info` → `info`
 
-4. It reviews whole files for context. Check each finding's line against the changed-file
-   list and mark anything the branch did not introduce as `pre-existing`.
+4. It reviews whole files for context, so it will report problems on lines the branch
+   never touched. Classify scope by the line, not the file: a changed-file list cannot tell
+   you whether a given line is in the diff. Check each finding's line against the
+   post-`/simplify` hunks and mark it `pre-existing` only when the line falls outside them:
+
+   ```bash
+   git -C "$WT" diff --no-ext-diff --unified=0 "$MERGE_BASE" -- "$file"
+   ```
+
+   Diff `$WT` (which includes `/simplify`'s uncommitted edits), not the committed branch.
 
 ## Output format
 

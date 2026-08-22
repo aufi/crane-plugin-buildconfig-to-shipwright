@@ -34,7 +34,9 @@ no change anywhere else.
 2. Run it against the merge base.
 
    `$REPO` here is the review worktree the orchestrator created, not the user's checkout.
-   Both CLIs run against it, so even the write-capable one can only touch a throwaway tree.
+   `coderabbit` is read-only and runs against it directly; `qodo` is writable, so it runs
+   against a private throwaway copy instead (see below). Either way no write reaches the
+   user's checkout.
 
    **coderabbit:**
 
@@ -46,23 +48,31 @@ no change anywhere else.
    gives scriptable output. `-c AGENTS.md` feeds it the repo's own conventions, so its
    findings account for local invariants instead of reporting workspace noise.
 
-   **qodo:**
+   **qodo:** `qodo` defaults to a writable, auto-approving session (`-q -y`), and Stage 3
+   runs the reviewers in parallel against the one shared `$REPO`. So `qodo` must not run in
+   that shared tree: a write while another reviewer is reading corrupts it, and Stage 7's
+   patch (`git -C "$WT" diff "$BASE"`) would sweep up whatever `qodo` left behind. Give it
+   its own private copy and throw it away after:
 
    ```bash
+   QREPO="$(mktemp -d)/qodo-review"
+   cp -a "$REPO" "$QREPO"    # a copy, not a git worktree — /simplify's edits are uncommitted
    qodo "Review the working tree in this directory against the merge base $MERGE_BASE
    (git diff --no-ext-diff $MERGE_BASE), including uncommitted changes. Focus on
-   correctness and edge cases. Report file and line for each issue." --dir "$REPO" -q -y
+   correctness and edge cases. Report file and line for each issue." --dir "$QREPO" -q -y
+   rm -rf "$QREPO"
    ```
 
-   Diff against `$MERGE_BASE`, not `$MERGE_BASE..HEAD`. `/simplify` ran first and its edits
-   are uncommitted in `$REPO` (HEAD is still the branch tip), so a `..HEAD` range would miss
-   them — and Stage 2 runs `/simplify` first precisely so the reviewers see its edits.
-   `coderabbit` gets this for free from `--cwd "$REPO"`; qodo needs it stated.
+   `cp -a`, not `git worktree add`: a worktree checks out a commit and would miss
+   `/simplify`'s uncommitted edits, reintroducing the very gap Stage 2 exists to close. The
+   copy carries those edits and contains any write `qodo` makes.
 
-   `qodo` defaults to a writable, auto-approving session; running it inside the disposable
-   worktree is what keeps that safe. If your `qodo` build supports a read-only agent file
-   or a `--permissions=r` flag, pass it as defence in depth — but never a flag that writes
-   back to the branch.
+   Diff against `$MERGE_BASE`, not `$MERGE_BASE..HEAD`. `/simplify` ran first and its edits
+   are uncommitted (HEAD is still the branch tip), so a `..HEAD` range would miss them.
+   `coderabbit` reads the shared tree directly via `--cwd "$REPO"`; it is read-only, so it
+   needs no copy. If your `qodo` build supports a read-only agent file or a `--permissions=r`
+   flag, pass it too as defence in depth — but the private copy is what actually protects the
+   shared tree and the Stage 7 patch.
 
    Give either tool a generous timeout. If it exceeds it, kill it and report
    `status: failed` with `reason: timed out after Ns` — never a clean empty result.

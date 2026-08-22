@@ -34,8 +34,16 @@ above the escalation threshold, and `/deep-review`'s at PR time.
 2. Map each reported issue to one finding.
 
 3. Classify scope honestly. `/code-review` reads whole files for context and will
-   sometimes report a problem on a line the branch never touched. Check the line against
-   the changed-file list and mark it `pre-existing` if the branch did not introduce it.
+   sometimes report a problem on a line the branch never touched. Classify by the line, not
+   the file: a changed-file list cannot tell you whether a given line is in the diff. Check
+   the line against the post-`/simplify` hunks and mark it `pre-existing` only when it falls
+   outside them:
+
+   ```bash
+   git -C "$WT" diff --no-ext-diff --unified=0 "$MERGE_BASE" -- "$file"
+   ```
+
+   Diff `$WT` (which includes `/simplify`'s uncommitted edits), not the committed branch.
 
 4. Set severity by consequence, not by the tool's own wording:
    - the build breaks, wrong data ships, or a security boundary fails → `blocker`
