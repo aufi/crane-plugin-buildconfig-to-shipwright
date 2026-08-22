@@ -46,7 +46,7 @@ above the escalation threshold, and `/deep-review`'s at PR time.
 
 The schema in `findings-schema.md`, with `source: "code-review"`.
 
-Write to `<scratchpad>/tech-review-<BRANCH>/code-review.json` and return a one-line
+Write to `$SCRATCH/code-review.json` and return a one-line
 count.
 
 ## Constraints

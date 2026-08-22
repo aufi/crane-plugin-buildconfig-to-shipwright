@@ -8,8 +8,12 @@ file's contents in each sub-agent's prompt.
 Write one JSON object to:
 
 ```text
-<scratchpad>/tech-review-<BRANCH>/<source>.json
+$SCRATCH/<source>.json
 ```
+
+`$SCRATCH` is the per-run scratchpad directory the orchestrator creates in Stage 0f and
+passes to you. It already exists; write your file straight into it. Use your reviewer's
+name for `<source>` (`coderabbit`, `qodo`, `code-review`, …).
 
 Return only a one-line count to the orchestrator. Do not return the findings themselves.
 

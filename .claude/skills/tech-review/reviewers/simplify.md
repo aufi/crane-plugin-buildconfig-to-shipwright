@@ -95,7 +95,7 @@ findings.
 }
 ```
 
-Write it to `<scratchpad>/tech-review-<BRANCH>/simplify.json` and return a one-line
+Write it to `$SCRATCH/simplify.json` and return a one-line
 count.
 
 ## Constraints

@@ -49,9 +49,15 @@ no change anywhere else.
    **qodo:**
 
    ```bash
-   qodo "Review the diff between $MERGE_BASE and HEAD. Focus on correctness and edge
-   cases. Report file and line for each issue." --dir "$REPO" -q -y
+   qodo "Review the working tree in this directory against the merge base $MERGE_BASE
+   (git diff --no-ext-diff $MERGE_BASE), including uncommitted changes. Focus on
+   correctness and edge cases. Report file and line for each issue." --dir "$REPO" -q -y
    ```
+
+   Diff against `$MERGE_BASE`, not `$MERGE_BASE..HEAD`. `/simplify` ran first and its edits
+   are uncommitted in `$REPO` (HEAD is still the branch tip), so a `..HEAD` range would miss
+   them — and Stage 2 runs `/simplify` first precisely so the reviewers see its edits.
+   `coderabbit` gets this for free from `--cwd "$REPO"`; qodo needs it stated.
 
    `qodo` defaults to a writable, auto-approving session; running it inside the disposable
    worktree is what keeps that safe. If your `qodo` build supports a read-only agent file
@@ -76,7 +82,7 @@ The schema in `findings-schema.md`, with `source` set to the tool's name — `co
 or `qodo`, not `cli-review`. Two CLIs may both run; their findings must stay
 distinguishable in the report.
 
-Write to `<scratchpad>/tech-review-<BRANCH>/<tool>.json` and return a one-line count.
+Write to `$SCRATCH/<tool>.json` and return a one-line count.
 
 ## Constraints
 

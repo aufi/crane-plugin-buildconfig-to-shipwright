@@ -129,6 +129,24 @@ repo; two branches means the work needs consolidating first.
 If none matches, re-run without `--quiet` and without stderr suppression to distinguish
 "no such branch" from "fetch failed", then report which it was.
 
+The match is a bare name (the prefixes were stripped for the ambiguity check). Resolve it
+to a ref git can actually use before going further — a branch that lives only on the fork
+has no local ref, so the bare name fails `git merge-base` and `git worktree add` with
+"unknown revision". Prefer a local branch; fall back to the fork's remote-tracking ref.
+Do not create a local branch — the remote-tracking ref is a valid commit-ish everywhere
+`$BRANCH` is used below (`merge-base`, `--detach` worktree, `"$BRANCH"..origin/main`), so
+resolving it read-only keeps the user's repo untouched:
+
+```bash
+if git show-ref --verify --quiet "refs/heads/$NAME"; then
+  BRANCH="$NAME"
+elif git show-ref --verify --quiet "refs/remotes/fork/$NAME"; then
+  BRANCH="fork/$NAME"    # fork-only branch: use the remote-tracking ref directly
+else
+  echo "no local or fork ref for $NAME"; exit 1
+fi
+```
+
 ### 0b. Compute the diff
 
 ```bash
@@ -194,7 +212,8 @@ not the shared checkout. This is what keeps the default path report-only: `/simp
 immutable copy every reviewer sees, even after `/simplify` edits it.
 
 ```bash
-WT="$(mktemp -d)/tech-review-$BRANCH"
+SLUG="$(printf '%s' "$BRANCH" | tr '/' '-')"   # a fork-only ref is "fork/BUILD-1234"; keep it out of paths
+WT="$(mktemp -d)/tech-review-$SLUG"
 git worktree add --detach "$WT" "$BRANCH"
 ```
 
@@ -205,10 +224,21 @@ and the worktree starts at the branch tip, so the review target is:
 git -C "$WT" diff --no-ext-diff "$BASE"    # BASE → worktree tree, including /simplify's edits
 ```
 
-Remove the worktree when the run ends, including on any early exit:
+Also create the scratchpad — one directory where every reviewer writes its findings JSON
+and Stage 7 writes its patch. It has to be defined here and passed to every sub-agent
+(Stage 3), because Stage 6 consolidates by reading these files off disk. Like `$WT`, it is
+an ephemeral `mktemp` dir outside the repo, so nothing lands in the checkout:
+
+```bash
+SCRATCH="$(mktemp -d)/tech-review-$SLUG"
+mkdir -p "$SCRATCH"
+```
+
+Remove both the worktree and the scratchpad when the run ends, including on any early exit:
 
 ```bash
 git worktree remove --force "$WT"
+rm -rf "$SCRATCH"
 ```
 
 ---
@@ -284,9 +314,10 @@ Read each file's body and pass it as the sub-agent prompt with
 frontmatter to the Agent tool's `model` parameter.
 
 Give every sub-agent the branch name, the merge base, the changed-file list, the worktree
-path `$WT` (their working directory and the single review target), and the contents of
-`findings-schema.md`. Reviewers read and run against `$WT`, never the shared checkout —
-so even a CLI tool that writes can only touch the throwaway worktree.
+path `$WT` (their working directory and the single review target), the scratchpad path
+`$SCRATCH` (where it writes its findings JSON), and the contents of `findings-schema.md`.
+Reviewers read and run against `$WT`, never the shared checkout — so even a CLI tool that
+writes can only touch the throwaway worktree.
 
 ### ce-code-review escalation
 
@@ -395,8 +426,8 @@ No design doc means SKIPPED, not a finding.
 
 ## Stage 6: Verdict
 
-Read every findings file from disk. Consolidation reads disk, not conversation context,
-so it survives compaction.
+Read every findings file from `$SCRATCH` (each reviewer wrote `$SCRATCH/<source>.json`).
+Consolidation reads disk, not conversation context, so it survives compaction.
 
 Deduplicate by file and line: findings within three lines of each other that describe
 the same problem merge into one, keeping the more specific description and listing every
@@ -501,7 +532,7 @@ With `--fix`, edits still land in the worktree `$WT`, never the user's checkout:
    can apply it to the real checkout:
 
    ```bash
-   git -C "$WT" diff --no-ext-diff "$BASE" > <scratchpad>/tech-review-<BRANCH>/fixes.patch
+   git -C "$WT" diff --no-ext-diff "$BASE" > "$SCRATCH/fixes.patch"
    ```
 
 6. Report what was applied and what was skipped.

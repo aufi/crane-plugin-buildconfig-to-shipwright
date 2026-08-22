@@ -64,7 +64,7 @@ API contracts, data migrations, and the always-on correctness and testing person
 
 The schema in `findings-schema.md`, with `source: "ce-code-review"`.
 
-Write to `<scratchpad>/tech-review-<BRANCH>/ce-code-review.json` and return a one-line
+Write to `$SCRATCH/ce-code-review.json` and return a one-line
 count.
 
 ## Constraints

@@ -49,8 +49,13 @@ For each blocking finding:
 2. **Check it is really in the diff.**
 
    ```bash
-   git diff --no-ext-diff "$MERGE_BASE" "$BRANCH" -- <file>
+   git -C "$WT" diff --no-ext-diff "$MERGE_BASE" -- <file>
    ```
+
+   Diff the worktree against the merge base, not `$MERGE_BASE "$BRANCH"`. You read the cited
+   file from `$WT`, which includes `/simplify`'s uncommitted edits; the committed branch diff
+   does not. Checking against the committed diff would make a line `/simplify` introduced look
+   absent and you would wrongly downgrade it to `pre-existing`. Same worktree, same lines.
 
    A real problem on a line the branch never touched is `pre-existing`, not a blocker.
    Downgrade it rather than removing it.
@@ -95,7 +100,7 @@ For each blocking finding:
 }
 ```
 
-Write to `<scratchpad>/tech-review-<BRANCH>/challenger.json` and return a one-line count
+Write to `$SCRATCH/challenger.json` and return a one-line count
 of upheld and removed.
 
 ## Constraints
