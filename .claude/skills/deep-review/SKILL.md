@@ -274,6 +274,48 @@ Report-only is already the default (O3), so the useful failure mode here is
 showing too much rather than too little. If that becomes noisy, raise this to
 `low` rather than reintroducing an unset variable.
 
+### O11. Unslop the review body before sharing it
+
+Every review this skill shows or posts is prose a person reads. Run it through
+the `superpowers:unslop` skill first so it does not read as machine-generated —
+no em-dash pile-ups, no puffery, no boilerplate structure.
+
+After you have composed the review body (O9) and settled the verdict, but
+**before** you render it to the terminal (the O3 default) or show it for `--post`
+confirmation:
+
+1. **Check whether `/unslop` is available.** It is available if it appears in the
+   skills list or the Skill tool can invoke it (`superpowers:unslop`, or a bare
+   `unslop`). Do not assume — check.
+
+2. **If it is available:** run it over the full review body and share the result
+   instead of the raw text. Unslop rewrites *wording only*. Preserve these
+   verbatim — do not let it touch them:
+   - the hidden `<!-- **Head SHA:** ... -->` first line (O8 re-review anchoring
+     reads it exactly as written; a reworded marker breaks the next run),
+   - every `file:line` reference,
+   - every code or command snippet and the fixed summary box from O9.
+
+3. **If it is not available:** do not silently skip it. Tell the user what the
+   skill does and offer to install it, then continue. Use this explanation:
+
+   > `/unslop` rewrites text to strip AI tells — em-dash overuse, puffery,
+   > filler, and formulaic structure — so the review reads like a person wrote
+   > it. It only changes wording; it never changes the findings, severities, or
+   > verdict.
+   >
+   > Install it with:
+   > `npx skills add https://github.com/cursor/plugins --skill unslop`
+
+   Ask whether to install it now. If yes, run that command and then do step 2. If
+   no, or the install fails, share the review as-is with a one-line note that it
+   was not unslopped.
+
+This runs on **every path that surfaces the review** — the report-only default and
+the `--post` confirmation body alike. It changes how the review reads, never what
+it says: the verdict, the findings, and their severities are fixed by the time
+O11 runs.
+
 ---
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
