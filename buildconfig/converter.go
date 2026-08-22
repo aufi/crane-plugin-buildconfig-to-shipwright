@@ -155,8 +155,7 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	c.processCompletionDeadline(bc, b)
 	c.processRunPolicy(bc)
 	c.processPostCommit(bc)
-	c.processSuccessfulBuildsHistoryLimit(bc, b)
-	c.processFailedBuildsHistoryLimit(bc, b)
+	c.processBuildsHistoryLimits(bc, b)
 	c.addRegistries(b)
 	c.processTriggers(bc, b)
 
@@ -943,56 +942,49 @@ const (
 	maxRetentionLimit = 10000
 )
 
-// processSuccessfulBuildsHistoryLimit maps BuildConfig successfulBuildsHistoryLimit
-// to Shipwright Build retention.succeededLimit (BUILD-2259). Out-of-range values —
-// including 0, which OpenShift allows ("retain none") but the Shipwright CRD
-// rejects — are warned and dropped so the retention block stays unset and
-// migrated BuildRuns are never auto-pruned unexpectedly.
-func (c *Converter) processSuccessfulBuildsHistoryLimit(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) {
-	if bc.Spec.SuccessfulBuildsHistoryLimit == nil {
-		return
+// resolveRetentionLimit validates one BuildConfig build-history limit against the
+// Shipwright CRD bounds, returning the value to store or nil when the field is
+// unset or unusable. Out-of-range values, including 0, which OpenShift allows
+// ("retain none") but the Shipwright CRD rejects, are warned and dropped so the
+// retention block stays unset and migrated BuildRuns are never auto-pruned
+// unexpectedly.
+func (c *Converter) resolveRetentionLimit(bc *buildv1.BuildConfig, limit *int32, bcField, swField string) *uint {
+	if limit == nil {
+		return nil
 	}
 
-	v := *bc.Spec.SuccessfulBuildsHistoryLimit
+	v := *limit
 	if v < minRetentionLimit || v > maxRetentionLimit {
-		c.Log.Warnf("successfulBuildsHistoryLimit %d on BuildConfig %s/%s is outside the Shipwright retention.succeededLimit range [%d,%d]; leaving retention unset — migrated BuildRuns will not be auto-pruned",
-			v, bc.Namespace, bc.Name, minRetentionLimit, maxRetentionLimit)
-		return
+		c.Log.Warnf("%s %d on BuildConfig %s/%s is outside the Shipwright %s range [%d,%d]; leaving retention unset — migrated BuildRuns will not be auto-pruned",
+			bcField, v, bc.Namespace, bc.Name, swField, minRetentionLimit, maxRetentionLimit)
+		return nil
 	}
 
-	limit := uint(v)
-	if b.Spec.Retention == nil {
-		b.Spec.Retention = &shipwrightv1beta1.BuildRetention{}
-	}
-	b.Spec.Retention.SucceededLimit = &limit
-	c.Log.Infof("Mapping successfulBuildsHistoryLimit %d to Build retention.succeededLimit for BuildConfig %s/%s (OpenShift pruned old Build objects; Shipwright will prune BuildRuns)",
-		v, bc.Namespace, bc.Name)
+	c.Log.Infof("Mapping %s %d to Build %s for BuildConfig %s/%s (OpenShift pruned old Build objects; Shipwright will prune BuildRuns)",
+		bcField, v, swField, bc.Namespace, bc.Name)
+	resolved := uint(v)
+	return &resolved
 }
 
-// processFailedBuildsHistoryLimit maps BuildConfig failedBuildsHistoryLimit
-// to Shipwright Build retention.failedLimit (BUILD-2260). Out-of-range values —
-// including 0, which OpenShift allows ("retain none") but the Shipwright CRD
-// rejects — are warned and dropped so the retention block stays unset and
-// migrated BuildRuns are never auto-pruned unexpectedly.
-func (c *Converter) processFailedBuildsHistoryLimit(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) {
-	if bc.Spec.FailedBuildsHistoryLimit == nil {
+// processBuildsHistoryLimits maps the BuildConfig build-history limits onto the
+// Shipwright Build retention block (BUILD-2259, BUILD-2260). The block is
+// allocated once, and only when at least one limit survives validation.
+func (c *Converter) processBuildsHistoryLimits(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) {
+	succeeded := c.resolveRetentionLimit(bc, bc.Spec.SuccessfulBuildsHistoryLimit, "successfulBuildsHistoryLimit", "retention.succeededLimit")
+	failed := c.resolveRetentionLimit(bc, bc.Spec.FailedBuildsHistoryLimit, "failedBuildsHistoryLimit", "retention.failedLimit")
+	if succeeded == nil && failed == nil {
 		return
 	}
 
-	v := *bc.Spec.FailedBuildsHistoryLimit
-	if v < minRetentionLimit || v > maxRetentionLimit {
-		c.Log.Warnf("failedBuildsHistoryLimit %d on BuildConfig %s/%s is outside the Shipwright retention.failedLimit range [%d,%d]; leaving retention unset — migrated BuildRuns will not be auto-pruned",
-			v, bc.Namespace, bc.Name, minRetentionLimit, maxRetentionLimit)
-		return
-	}
-
-	limit := uint(v)
 	if b.Spec.Retention == nil {
 		b.Spec.Retention = &shipwrightv1beta1.BuildRetention{}
 	}
-	b.Spec.Retention.FailedLimit = &limit
-	c.Log.Infof("Mapping failedBuildsHistoryLimit %d to Build retention.failedLimit for BuildConfig %s/%s (OpenShift pruned old Build objects; Shipwright will prune BuildRuns)",
-		v, bc.Namespace, bc.Name)
+	if succeeded != nil {
+		b.Spec.Retention.SucceededLimit = succeeded
+	}
+	if failed != nil {
+		b.Spec.Retention.FailedLimit = failed
+	}
 }
 
 func (c *Converter) addRegistries(b *shipwrightv1beta1.Build) {
