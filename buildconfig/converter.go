@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -927,8 +928,20 @@ func (c *Converter) processNodeSelector(bc *buildv1.BuildConfig, b *shipwrightv1
 		return
 	}
 
+	// Validate in sorted key order. Go randomizes map iteration, so ranging the
+	// map directly made a BuildConfig with several invalid entries name a
+	// different culprit in the warning on every run — useless for triage during
+	// a bulk migration, where the operator re-runs the conversion to find out
+	// which entry to fix.
+	keys := make([]string, 0, len(bc.Spec.NodeSelector))
+	for key := range bc.Spec.NodeSelector {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	selector := make(map[string]string, len(bc.Spec.NodeSelector))
-	for key, value := range bc.Spec.NodeSelector {
+	for _, key := range keys {
+		value := bc.Spec.NodeSelector[key]
 		if errs := validation.IsQualifiedName(key); len(errs) > 0 {
 			c.Log.Warnf("nodeSelector key %q on BuildConfig %s/%s is not a valid label key (%s); dropping the whole nodeSelector — migrated builds will not be pinned to any node",
 				key, bc.Namespace, bc.Name, strings.Join(errs, "; "))

@@ -2936,6 +2936,99 @@ func TestProcessNodeSelector(t *testing.T) {
 	}
 }
 
+// nodeSelectorConversionRequest builds a PluginRequest for a minimal
+// Docker-strategy BuildConfig carrying the given nodeSelector (nil to omit
+// it) plus any extra spec fields (e.g. resources). Shared by the
+// nodeSelector wiring tests below so they don't each re-declare the same
+// source/strategy/output boilerplate.
+func nodeSelectorConversionRequest(nodeSelector map[string]interface{}, extra map[string]interface{}) transform.PluginRequest {
+	spec := map[string]interface{}{
+		"source": map[string]interface{}{
+			"type": "Git",
+			"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+		},
+		"strategy": map[string]interface{}{
+			"type":           "Docker",
+			"dockerStrategy": map[string]interface{}{},
+		},
+		"output": map[string]interface{}{
+			"to": map[string]interface{}{
+				"kind": "DockerImage",
+				"name": "quay.io/org/myapp:latest",
+			},
+		},
+	}
+	if nodeSelector != nil {
+		spec["nodeSelector"] = nodeSelector
+	}
+	for key, value := range extra {
+		spec[key] = value
+	}
+
+	return transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "myapp",
+				"namespace": "myns",
+			},
+			"spec": spec,
+		}},
+	}
+}
+
+// TestProcessNodeSelectorWarningIsDeterministic pins the review finding that
+// the validation loop used to range bc.Spec.NodeSelector directly: with several
+// invalid entries, Go's randomized map iteration named a different culprit in
+// the warning on each run. One assertion could pass by luck, so this runs the
+// conversion repeatedly and requires the message to be byte-identical every
+// time.
+func TestProcessNodeSelectorWarningIsDeterministic(t *testing.T) {
+	bc := &buildv1.BuildConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "selector-app", Namespace: "myns"},
+		Spec: buildv1.BuildConfigSpec{
+			CommonSpec: buildv1.CommonSpec{
+				NodeSelector: buildv1.OptionalNodeSelector{
+					"zz bad key": "value",
+					"aa bad key": "value",
+					"mm bad key": "value",
+					"disktype":   "ssd",
+				},
+			},
+		},
+	}
+
+	var first string
+	for i := 0; i < 50; i++ {
+		logger, hook := logrustest.NewNullLogger()
+		c := &Converter{Log: logger}
+		b := &shipwrightv1beta1.Build{}
+
+		c.processNodeSelector(bc, b)
+
+		if b.Spec.NodeSelector != nil {
+			t.Fatalf("run %d: nodeSelector = %#v, want nil", i, b.Spec.NodeSelector)
+		}
+		entries := hook.AllEntries()
+		if len(entries) != 1 {
+			t.Fatalf("run %d: expected exactly 1 log entry, got %d", i, len(entries))
+		}
+
+		got := entries[0].Message
+		if i == 0 {
+			first = got
+			if !strings.Contains(got, `"aa bad key"`) {
+				t.Fatalf("warning = %q, want it to name the lowest-sorted invalid key \"aa bad key\"", got)
+			}
+			continue
+		}
+		if got != first {
+			t.Fatalf("run %d differs from run 0 — validation order is not deterministic\n run 0: %s\n run %d: %s", i, first, i, got)
+		}
+	}
+}
+
 // TestConvertNodeSelectorWiring proves processNodeSelector is reachable from
 // Convert and that the value survives the typed -> unstructured round trip that
 // produces the emitted YAML.
@@ -2959,38 +3052,8 @@ func TestConvertNodeSelectorWiring(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := map[string]interface{}{
-				"source": map[string]interface{}{
-					"type": "Git",
-					"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
-				},
-				"strategy": map[string]interface{}{
-					"type":           "Docker",
-					"dockerStrategy": map[string]interface{}{},
-				},
-				"output": map[string]interface{}{
-					"to": map[string]interface{}{
-						"kind": "DockerImage",
-						"name": "quay.io/org/myapp:latest",
-					},
-				},
-			}
-			if tt.nodeSelector != nil {
-				spec["nodeSelector"] = tt.nodeSelector
-			}
-
 			plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
-			request := transform.PluginRequest{
-				Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
-					"apiVersion": "build.openshift.io/v1",
-					"kind":       "BuildConfig",
-					"metadata": map[string]interface{}{
-						"name":      "myapp",
-						"namespace": "myns",
-					},
-					"spec": spec,
-				}},
-			}
+			request := nodeSelectorConversionRequest(tt.nodeSelector, nil)
 
 			resp, err := plugin.Run(request)
 			if err != nil {
@@ -3024,43 +3087,25 @@ func TestConvertNodeSelectorWiring(t *testing.T) {
 // annotation, and neither disturbs the other.
 func TestConvertNodeSelectorWithResources(t *testing.T) {
 	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
-	request := transform.PluginRequest{
-		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "build.openshift.io/v1",
-			"kind":       "BuildConfig",
-			"metadata": map[string]interface{}{
-				"name":      "myapp",
-				"namespace": "myns",
+	request := nodeSelectorConversionRequest(
+		map[string]interface{}{"disktype": "ssd"},
+		map[string]interface{}{
+			"resources": map[string]interface{}{
+				"requests": map[string]interface{}{"cpu": "100m", "memory": "256Mi"},
+				"limits":   map[string]interface{}{"cpu": "500m", "memory": "1Gi"},
 			},
-			"spec": map[string]interface{}{
-				"source": map[string]interface{}{
-					"type": "Git",
-					"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
-				},
-				"strategy": map[string]interface{}{
-					"type":           "Docker",
-					"dockerStrategy": map[string]interface{}{},
-				},
-				"output": map[string]interface{}{
-					"to": map[string]interface{}{
-						"kind": "DockerImage",
-						"name": "quay.io/org/myapp:latest",
-					},
-				},
-				"nodeSelector": map[string]interface{}{"disktype": "ssd"},
-				"resources": map[string]interface{}{
-					"requests": map[string]interface{}{"cpu": "100m", "memory": "256Mi"},
-					"limits":   map[string]interface{}{"cpu": "500m", "memory": "1Gi"},
-				},
-			},
-		}},
-	}
+		},
+	)
 
 	resp, err := plugin.Run(request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Decode the whole emitted object into the real Shipwright type rather than
+	// reading the two fields under test. A narrow accessor would pass even if
+	// conversion corrupted an unrelated part of the Build, and this is the one
+	// test that exercises nodeSelector and the BUILD-2261 template together.
 	b := &shipwrightv1beta1.Build{}
 	jsonBytes, err := json.Marshal(resp.NewResources[0].Object)
 	if err != nil {
