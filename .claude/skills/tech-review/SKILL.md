@@ -35,7 +35,7 @@ If the user asks to review an open PR, or someone else's PR, say so and point at
    reports; findings go to the terminal. `/simplify` (always) and `--fix` (on request)
    edit an isolated worktree of the branch created in Stage 0f — so the default path
    leaves the user's repo byte-for-byte unchanged, and rollback is `git worktree remove`.
-   Nothing is committed, pushed, or written to Jira or a tracker.
+   Nothing is committed, pushed, or written to Jira.
 3. **Baseline is fetched `origin/main`, never local `main`.** A stale local main
    misattributes already-merged work to the branch and produces false blockers.
 4. **Every `git diff` and `git show` uses `--no-ext-diff`.** The repo's external diff

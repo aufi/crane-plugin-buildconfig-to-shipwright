@@ -36,7 +36,7 @@ The user invoked this with: $ARGUMENTS
 Two entries are not repositories and have no remote:
 
 - **Work Directory** — the root the search starts from.
-- **Designs Directory** — where design docs and `TRACKER.md` are written. Defaults to
+- **Designs Directory** — where design docs are written. Defaults to
   `<Crane Plugin Repo>/designs`, which `.gitignore` covers.
 
   A custom value **must live outside any repository checkout**. `.gitignore` only ignores

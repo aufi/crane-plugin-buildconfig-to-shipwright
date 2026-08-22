@@ -22,9 +22,11 @@ story.
 - **Jira prefix:** if a Jira issue is linked, commit subjects and the PR title
   start with `[BUILD-XXXX]`. The Jira project code is `BUILD`.
 - **Commit flags:** always `-s` (sign-off) and `-S` (GPG sign).
-- **Co-author trailer:** every commit ends with
-  `Co-Authored-By: Claude <noreply@anthropic.com>`. The email is required, or
-  GitHub will not render the co-author.
+- **Co-author trailer:** every commit **message** ends with
+  `Co-Authored-By: Claude <noreply@anthropic.com>` — the email is required there,
+  or GitHub will not render the co-author. The PR body ends with
+  `Co-Authored-By: Claude` (no email); GitHub does not parse the PR description
+  for co-authors, so it is just a marker.
 - **Voice:** run the `unslop` skill over the commit body, PR title, and PR body
   before using them (strip AI tells, plain human voice).
 
@@ -251,10 +253,11 @@ edit. The title matches the commit subject.
 ### Jira Issues
 Resolves: BUILD-XXXX
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-Authored-By: Claude
 ```
 
-Omit the `### Jira Issues` section and `Resolves:` line if there is no Jira.
+Omit the `### Jira Issues` section and `Resolves:` line if there is no Jira. The
+`Co-Authored-By: Claude` line stays either way.
 Omit `## Testing` only if no tests were run this session (say so instead of
 faking results).
 

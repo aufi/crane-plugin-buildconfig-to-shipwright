@@ -28,7 +28,7 @@ Parse the argument:
 
 - Do NOT assign priority until all research phases are complete
 - Do NOT skip the strategy-catalog check — upstream and downstream strategies diverge
-- Do NOT claim "not implemented" without checking TRACKER, merged code, and open PRs — the work may already exist or be in flight (see **Phase 5**)
+- Do NOT claim "not implemented" without checking Jira, merged code, and open PRs — the work may already exist or be in flight (see **Phase 5**)
 - Do NOT write anything until the user approves — see **Phase 9**
 - Every claim must cite a specific `file:line` or search result — no guessing
 
@@ -88,7 +88,7 @@ Throughout this skill, `<Label>` means the path stored under that label in `repo
 | Crane Lib Repo | **Legacy, frozen.** Prior-art archive only, never a PR target |
 
 The conversion code moved out of crane-lib on 2026-08-13; any new conversion work belongs
-in the Crane Plugin Repo. crane-lib prior art is trusted to be captured in TRACKER as a
+in the Crane Plugin Repo. crane-lib prior art is trusted to be captured in Jira as a
 story when it needs porting, so this skill no longer scans crane-lib directly.
 
 The operator's `config/shipwright/build/strategy/*.yaml` files are **generated** by
@@ -303,16 +303,16 @@ per-source-field and never per-destination-outcome.)_
 
 Answer one question — *is this feature already delivered, or in flight right now?* —
 from the tracked sources of truth, checked cheapest and most reliable first. Stop at the
-first hit. Do not crawl every branch: if work is real, it is recorded as a Jira story /
-TRACKER row or an open PR. Trust that.
+first hit. Do not crawl every branch: if work is real, it is recorded as a Jira story or
+an open PR. Trust that.
 
-**5a. TRACKER.md — the master record**
+**5a. Jira — the master record**
 
-Every dispositioned feature has a row here (story ↔ branch ↔ design). If a row already
-covers this feature, report the existing story and stop.
+Jira is the single source of truth. Search it for a story that already covers this
+feature. If one does, report the existing story and stop.
 
 ```bash
-grep -in "<feature-keyword>\|<ISSUE-KEY>" "<Designs Directory>/TRACKER.md"
+jira issue list --jql "project = BUILD AND (summary ~ '<feature-keyword>' OR description ~ '<feature-keyword>')" --plain
 ```
 
 **5b. Merged code — is it already in `main`?**
@@ -380,37 +380,28 @@ Risk:         <description or none>
 
 Discuss with the user and adjust. Do NOT finalize until the user confirms.
 
-Confirm the issue exists in Jira under the expected epic BEFORE triaging. The two
-mismatch cases are **not** the same and must not be handled the same way:
-
-- **Jira-only** (issue exists, no TRACKER row) — surface it, then continue. The row is
-  created by the Tracker Update step below, which is the normal path for a newly triaged
-  issue. Do not stop.
-- **TRACKER-only** (row exists, no Jira issue) — STOP. There is nothing to triage against
-  and nowhere to post, and the row may be a typo or a deleted issue. Surface it and wait.
-
-_(Origin: Audit 8 — 9 Jira-only issues incl. BUILD-2279 absent from TRACKER.)_
+Confirm the issue exists in Jira under the expected epic BEFORE triaging. If the issue
+key does not resolve in Jira, STOP — there is nothing to triage against and nowhere to
+post the results. Surface it and wait.
 
 ### Phase 9: Approval Gate — nothing is written before this
 
-This skill produces three artifacts. **All three are gated on one explicit approval.**
-Do not write the design doc, do not post to Jira, and do not touch TRACKER.md until the
-user has said yes to the preview below.
+This skill produces two artifacts. **Both are gated on one explicit approval.**
+Do not write the design doc and do not post to Jira until the user has said yes to the
+preview below.
 
-Present all three together:
+Present both together:
 
 1. **Design doc** — the target path, and a summary of what it will contain.
 2. **Jira comment** — the exact text, verbatim, as it will be posted.
-3. **TRACKER row** — the row as it is now, and the row as it will be. If the row does not
-   exist yet, say so and show the row to be added.
 
-Then ask a single question: "Approve all three?"
+Then ask a single question: "Approve both?"
 
 On approval, execute in this order and report each result:
 
 1. Write the design doc.
 2. Post the Jira comment.
-3. Update TRACKER.md, then read it back and verify.
+3. Set the Jira story points and confirm the epic link (see **Jira Update**).
 
 If the user approves only some, do those and say plainly which were skipped.
 
@@ -450,7 +441,7 @@ kebab-case (e.g. `BUILD-1578-no-cache-buildah-strategy.md`).
 ### Crane Plugin Status
 - Current handling: <warning/partial/none> (confidence: N/10)
 - File: <file:line reference>
-- TRACKER row: <story:BUILD-XXXX / none>
+- Prior story covering this feature: <BUILD-XXXX / none>  (not the issue being triaged)
 - Merged in main: <yes/no>
 - Open PR: <PR # / none>
 - Risk flags: <silent data loss warnings or none>
@@ -523,21 +514,16 @@ executed rather than posted.
 printf '%s\n' "$APPROVED_COMMENT" | jira issue comment add <ISSUE-KEY> --template - --no-input
 ```
 
-## Tracker Update
+## Jira Update
 
-After the design doc is written and the Jira comment posted, update
-`<Designs Directory>/TRACKER.md`:
+Jira is the single source of truth. After the design doc is written and the Jira comment
+posted:
 
-- Find the row for this issue key. If absent, ADD it — never skip silently.
-- Update Points, Est. Days, Status (set to `Triaged`), and the Design Doc link.
-- Update the Summary section totals.
-- **Verify (read-back, MANDATORY):** re-read the row from the file that was just written,
-  using its configured path — `grep -n "BUILD-XXXX" "<Designs Directory>/TRACKER.md"`
-  and confirm Points and Status match what you just wrote. Then set the Jira story points
-  via jira-cli (`customfield_10028` — never raw curl reads; REST returns obfuscated data)
-  and confirm the issue's epic link matches the epic it was triaged under.
+- Set the Jira story points via jira-cli (`customfield_10028` — never raw curl reads;
+  REST returns obfuscated data).
+- Confirm the issue's epic link matches the epic it was triaged under.
 
-A mismatch between design doc, TRACKER row, and Jira points/epic is a BLOCKING error.
+A mismatch between the design doc and the Jira points/epic is a BLOCKING error.
 
 ## Multi-Issue Session Flow
 
@@ -598,14 +584,14 @@ The Escape Hatch does not waive Phase 9 or the Compliance Report.
 | Phase | Status | Evidence / Reason |
 |-------|--------|-------------------|
 | 0–9 (one row each, incl. Phase 4d destination-needs table row count) | ✅ / ⏭️ SKIPPED (reason) / ❌ | |
-| Tracker+Jira write-back verified | ✅ / ❌ | grep output |
+| Jira write-back verified (points + epic link) | ✅ / ❌ | command output |
 
 Any unexplained row forces Completion Status = DONE_WITH_CONCERNS at best.
 
 ## Completion Status
 
 End each issue with one of:
-- **DONE** — full research complete, design doc written, Jira updated, tracker updated
+- **DONE** — full research complete, design doc written, Jira updated
 - **DONE_WITH_CONCERNS** — research complete but gaps identified (list them)
 - **BLOCKED** — cannot proceed, state what's missing
 - **NEEDS_CONTEXT** — need user or team input on specific questions
