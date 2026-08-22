@@ -3,8 +3,9 @@ package buildconfig
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -928,36 +929,32 @@ func (c *Converter) processNodeSelector(bc *buildv1.BuildConfig, b *shipwrightv1
 		return
 	}
 
-	// Validate in sorted key order. Go randomizes map iteration, so ranging the
-	// map directly made a BuildConfig with several invalid entries name a
-	// different culprit in the warning on every run — useless for triage during
-	// a bulk migration, where the operator re-runs the conversion to find out
-	// which entry to fix.
-	keys := make([]string, 0, len(bc.Spec.NodeSelector))
-	for key := range bc.Spec.NodeSelector {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	selector := make(map[string]string, len(bc.Spec.NodeSelector))
-	for _, key := range keys {
-		value := bc.Spec.NodeSelector[key]
-		if errs := validation.IsQualifiedName(key); len(errs) > 0 {
-			c.Log.Warnf("nodeSelector key %q on BuildConfig %s/%s is not a valid label key (%s); dropping the whole nodeSelector — migrated builds will not be pinned to any node",
-				key, bc.Namespace, bc.Name, strings.Join(errs, "; "))
-			return
-		}
-		if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
-			c.Log.Warnf("nodeSelector value %q for key %q on BuildConfig %s/%s is not a valid label value (%s); dropping the whole nodeSelector — migrated builds will not be pinned to any node",
-				value, key, bc.Namespace, bc.Name, strings.Join(errs, "; "))
-			return
-		}
-		selector[key] = value
+	if err := validateNodeSelector(bc.Spec.NodeSelector); err != nil {
+		c.Log.Warnf("nodeSelector on BuildConfig %s/%s is invalid: %v; dropping the whole nodeSelector — migrated builds will not be pinned to any node",
+			bc.Namespace, bc.Name, err)
+		return
 	}
 
-	b.Spec.NodeSelector = selector
+	b.Spec.NodeSelector = maps.Clone(bc.Spec.NodeSelector)
 	c.Log.Infof("Mapping nodeSelector %v to Build spec.nodeSelector for BuildConfig %s/%s",
 		bc.Spec.NodeSelector, bc.Namespace, bc.Name)
+}
+
+// validateNodeSelector reports the first entry Shipwright would reject, using
+// the same apimachinery helpers as its own pkg/validate/nodeselector.go so the
+// two cannot drift apart. Entries are checked in sorted key order: Go
+// randomizes map iteration, and a warning that fingers a different key on each
+// run is useless when triaging a bulk migration.
+func validateNodeSelector(selector map[string]string) error {
+	for _, key := range slices.Sorted(maps.Keys(selector)) {
+		if errs := validation.IsQualifiedName(key); len(errs) > 0 {
+			return fmt.Errorf("key %q is not a valid label key (%s)", key, strings.Join(errs, "; "))
+		}
+		if errs := validation.IsValidLabelValue(selector[key]); len(errs) > 0 {
+			return fmt.Errorf("value %q for key %q is not a valid label value (%s)", selector[key], key, strings.Join(errs, "; "))
+		}
+	}
+	return nil
 }
 
 // processRunPolicy reports the build scheduling behaviour that is lost during
