@@ -316,6 +316,22 @@ the `--post` confirmation body alike. It changes how the review reads, never wha
 it says: the verdict, the findings, and their severities are fixed by the time
 O11 runs.
 
+### O12. Sign every review — `Co-authored-by: Claude`
+
+Every review this skill renders or posts ends with a trailer crediting Claude as
+co-author. Append it as the **last step**, after O11 has run, so unslop never
+rewrites it and it is always present and exact:
+
+```
+Co-authored-by: Claude
+```
+
+Put it on its own line at the very bottom of the review body, after a blank line
+(a `---` rule above it is fine). Use this exact text — no email, no "Claude Code",
+no version. It applies on every path that surfaces the review: the report-only
+terminal render and the `--post` body alike, including the "Looks good to me"
+no-findings case.
+
 ---
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
