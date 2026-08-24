@@ -248,6 +248,13 @@ See [`hack/README.md`](hack/README.md) for detailed setup instructions.
 - **Multiple source types** — Shipwright supports one source per Build. BuildConfigs with multiple sources produce an error.
 - **BuildRun not generated** — Only the Build definition is created. Triggering builds is left to the user or CI/CD system.
 
+## Issue tracking
+
+This project is tracked primarily in Jira, under the BUILD project. This is different from
+crane, which is tracked primarily in GitHub (Projects and Issues) and uses Jira only for the
+non-upstream tracking that is required internally. If you are picking up or filing work for
+this plugin, use Jira as the source of truth.
+
 ## Related
 
 - [Enhancement proposal](https://github.com/konveyor/enhancements/pull/300)

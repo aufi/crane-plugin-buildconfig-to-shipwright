@@ -61,6 +61,7 @@ Standard Go tests at the method level:
 GOTOOLCHAIN=auto go test ./...
 ```
 
+
 ### 2. Plugin E2E Tests
 Tests the plugin binary with crane, processing input YAMLs and asserting output transformations:
 
@@ -74,3 +75,18 @@ Full end-to-end validation on real Minikube clusters. See [`hack/README.md`](hac
 **CI/CD:**
 
 Pull requests run automated E2E tests on Minikube via [`.github/workflows/test-e2e-minikube-pr.yml`](.github/workflows/test-e2e-minikube-pr.yml).
+
+## Commit policy
+
+Every commit in this repo is signed off:
+
+```
+git commit -s
+```
+
+- `-s` adds the DCO `Signed-off-by` trailer.
+
+Write the commit message through the `/unslop` skill before committing, so it
+reads like a person wrote it. This holds for every commit, including the fixes an
+agent makes after a `/deep-review` pass.
+

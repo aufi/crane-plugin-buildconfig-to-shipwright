@@ -2,6 +2,7 @@ package buildconfig
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -36,10 +37,40 @@ func resolveImageRef(kind, name, namespace string, opts PluginOptionalFields) (s
 }
 
 func applyRegistryMapping(imageRef string, registryMapping map[string]string) string {
-	for oldRegistry, newRegistry := range registryMapping {
+	// Iterate in a deterministic order: longest prefix first (most specific
+	// mapping wins), ties broken lexically. Plain map iteration order is
+	// random in Go, which made the winner nondeterministic when multiple
+	// keys matched (BUILD-2339).
+	keys := make([]string, 0, len(registryMapping))
+	for k := range registryMapping {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) != len(keys[j]) {
+			return len(keys[i]) > len(keys[j])
+		}
+		return keys[i] < keys[j]
+	})
+	for _, oldRegistry := range keys {
+		if oldRegistry == "" {
+			// A malformed mapping entry (e.g. "=newvalue") yields an empty
+			// key, which HasPrefix would match against every image ref.
+			// Ignore it rather than silently remapping everything.
+			continue
+		}
 		if strings.HasPrefix(imageRef, oldRegistry) {
-			imageRef = newRegistry + imageRef[len(oldRegistry):]
-			break
+			newRegistry := registryMapping[oldRegistry]
+			if newRegistry == "" {
+				// A malformed mapping entry (e.g. "quay.io=" or a bare
+				// "quay.io" token) yields an empty value; substituting it
+				// would produce an invalid ref like "/team/app:v1". Skip
+				// the entry and keep looking for a usable mapping.
+				continue
+			}
+			// Note: if imageRef is a bare registry with no path (already not
+			// a valid image ref), this intentionally passes it through as the
+			// bare replacement registry.
+			return newRegistry + imageRef[len(oldRegistry):]
 		}
 	}
 	return imageRef
