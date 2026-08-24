@@ -131,11 +131,17 @@ branch first, then run every later git command against the directory that actual
    - **No open PR and no commit ahead** (on `main`, or an empty branch) → new-PR mode: create
      the branch (Step 4), stage (Step 5), and commit (Step 6).
 
-   Check for an existing commit with:
+   Check for an existing commit — and that the worktree is clean — before you skip the
+   commit steps. A count alone does not prove the tree holds no uncommitted work, and
+   pushing over a dirty tree ships stale content:
 
    ```bash
    git -C "$WORK" rev-list --count "main..$BRANCH"    # >0 means a commit already exists
+   git -C "$WORK" status --porcelain                  # must be empty to preserve the commit
    ```
+
+   If `status --porcelain` prints anything, treat it as new-PR/amend work: stage and commit
+   (Steps 5–6) rather than preserving what is there.
 
 **Amend-mode principle:** the PR is always one commit. When you *do* author the message,
 describe the entire diff from `main` as one coherent unit — never "added later" or "fixed
@@ -251,6 +257,7 @@ left a stale tip), the plain push is rejected. Preserve the fork's current tip a
 plain force-push:
 
 ```bash
+git -C "$WORK" fetch fork "$BRANCH"    # refresh fork/$BRANCH so the tag captures the real tip
 git -C "$WORK" tag "archive/fork-old-$BRANCH" "fork/$BRANCH"
 git -C "$WORK" push fork "archive/fork-old-$BRANCH"
 git -C "$WORK" push -u --force-with-lease fork "$BRANCH:$BRANCH"

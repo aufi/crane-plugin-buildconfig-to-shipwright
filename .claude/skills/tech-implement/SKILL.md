@@ -430,12 +430,17 @@ current="$(git -C "$WT" rev-parse HEAD)"
 - If any element above is missing, or the SHAs differ, say "implemented, evidence pending"
   in the summary and set the Completion Status to **DONE_WITH_CONCERNS**, not **DONE**.
 - Never claim tested on the strength of a narrative.
+- **`documentation` and `spike` work has no automated tests.** Its evidence is a manual-review
+  record in the same results file: what was changed, how it was verified (the command run, the
+  rendered output eyeballed, the reference checked), and the branch HEAD SHA. That record, with
+  a matching SHA, satisfies the gate for these classifications; a test command and exit code
+  are not required.
 
 ### Summary banner
 
 Run the banner through `/unslop` before printing it.
 
-```
+```text
 IMPLEMENTATION COMPLETE: BUILD-XXXX
 ====================================
 Repos modified:
