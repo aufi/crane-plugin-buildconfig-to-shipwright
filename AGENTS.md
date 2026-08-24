@@ -46,15 +46,13 @@ GOTOOLCHAIN=auto go test ./...
 
 ## Commit policy
 
-Every commit in this repo is signed off and cryptographically signed:
+Every commit in this repo is signed off:
 
 ```
-git commit -s -S
+git commit -s
 ```
 
 - `-s` adds the DCO `Signed-off-by` trailer.
-- `-S` GPG-signs the commit. Signing is already on by default here
-  (`commit.gpgsign=true`), so `-S` states the intent rather than changing it.
 
 Write the commit message through the `/unslop` skill before committing, so it
 reads like a person wrote it. This holds for every commit, including the fixes an
