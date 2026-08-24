@@ -1958,6 +1958,9 @@ func TestConvertMetadataAnnotationsCopied(t *testing.T) {
 	}
 
 	annotations := resp.NewResources[0].GetAnnotations()
+	// The conversion-outcome annotation (BUILD-2318) is added by the outcome
+	// model on every Build and is not part of the metadata copy under test.
+	delete(annotations, ConversionOutcomeAnnotation)
 	want := map[string]string{
 		"team":                             "builds",
 		"contact":                          "builds@example.com",
@@ -1993,6 +1996,7 @@ func TestConvertMetadataAnnotationsFiltersInternal(t *testing.T) {
 	}
 
 	annotations := resp.NewResources[0].GetAnnotations()
+	delete(annotations, ConversionOutcomeAnnotation)
 	if len(annotations) != 2 || annotations["team"] != "builds" ||
 		annotations["crane.konveyor.io/converted-from"] == "" {
 		t.Errorf("expected only user annotation plus converted-from to survive filtering, got %v", annotations)
@@ -2021,6 +2025,7 @@ func TestConvertMetadataAnnotationsAbsent(t *testing.T) {
 		t.Fatal("expected at least 1 new resource")
 	}
 	annotations := resp.NewResources[0].GetAnnotations()
+	delete(annotations, ConversionOutcomeAnnotation)
 	if len(annotations) != 1 ||
 		annotations["crane.konveyor.io/converted-from"] != "build.openshift.io/v1/BuildConfig/no-annotations-app" {
 		t.Errorf("expected only converted-from annotation, got %v", annotations)
