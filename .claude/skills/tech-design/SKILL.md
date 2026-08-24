@@ -126,9 +126,12 @@ Do not batch. Do not ask a question whose answer is in a repo you can read. Ask 
 highest-impact question first, and re-evaluate after each answer, since an answer often
 dissolves the questions behind it.
 
-Lead with the answer. The first line of any question or checkpoint is the
-recommendation, or the fact the human asked for, in one sentence; context and options
-follow for a reader who wants them. A three-option brief with a paragraph of setup got
+Lead with the answer. For a checkpoint or a direct factual question, the first content
+line is the recommendation or the fact the human asked for, in one sentence; context
+and options follow for a reader who wants them. A decision question uses the `Q<N>`
+template below, where the `Q<N> — <title>` line is a label, not content, and one or two
+framing sentences precede the `Recommendation:` line so the reader can weigh the letter
+— nothing else may come before it. A three-option brief with a paragraph of setup got
 interrupted on BUILD-2334 with "super short answer". The sentence it was missing was
 "yes, the bump waits on a tag, and the noise can be fixed without it".
 
@@ -390,8 +393,10 @@ Confirm which codebase the words point at before assuming it is ours.
 
 The same goes for any claim about what exists today. A description written before the
 2026-08-13 repo move describes crane-lib, and a function it names may never have reached
-this repo. Grep the target repo at HEAD for every symbol, file and behaviour the
-description says is there before building on it. BUILD-2334 said `cleanNullFields`
+this repo. Grep the target repo at HEAD for every symbol and file the description says
+is there before building on it — and for a behaviour claim, grep only locates the
+candidate; confirm it by reading the implementation or running a fixture, since a hit
+can be a comment, a docstring, dead code, or an unrelated symbol. BUILD-2334 said `cleanNullFields`
 strips nulls today and must be deleted. It only ever existed on an unmerged crane-lib
 branch, and the plugin was emitting the nulls with no workaround at all. The story's
 scope item read "delete the workaround"; the true scope item was "there is no
@@ -435,12 +440,14 @@ jira issue list --jql "project = BUILD AND (summary ~ '<feature-keyword>' OR des
 # 2. Merged code. Blind spot: the symbol may be named nothing like the feature, and the
 #    work may live outside converter.go. Grep the package, not one file, and search for
 #    the behaviour as well as the name.
-#    Exclude .claude: the plugin repo keeps git worktrees under .claude/worktrees/, and
-#    each one is a full copy of the tree. Without the exclusion a single real hit arrives
-#    buried in one duplicate per worktree, and the file list alone can run past a hundred
-#    lines. .gstack holds the browse tool's untracked network and console logs at the
-#    repo root, and any string a visited page served can turn up in them.
-grep -rn --exclude-dir=.claude --exclude-dir=.gstack --exclude-dir=vendor --exclude-dir=.git \
+#    Exclude worktrees, not all of .claude: the plugin repo keeps git worktrees under
+#    .claude/worktrees/, and each one is a full copy of the tree. Without the exclusion a
+#    single real hit arrives buried in one duplicate per worktree, and the file list alone
+#    can run past a hundred lines. Excluding all of .claude would hide real work — the
+#    skills themselves live under .claude/skills — so prune only worktrees. .gstack holds
+#    the browse tool's untracked network and console logs at the repo root, and any string
+#    a visited page served can turn up in them.
+grep -rn --exclude-dir=worktrees --exclude-dir=.gstack --exclude-dir=vendor --exclude-dir=.git \
   "<feature-keyword>" "<Target Repo>"
 
 # 3. Merged PRs. This is the one that finds delivered work. --state open cannot: a
@@ -769,9 +776,12 @@ grep -c "^## " "$SPEC"
 #    disposition, so counting them made this check report 2 on a perfectly clean table
 #    and 0 was unreachable. The header match is case-insensitive: every spec written so
 #    far capitalises it ("Source field / state"), and a case-sensitive match counted it.
+#    Count each disposition token per row and flag any row that does not carry exactly
+#    one. Rejecting only rows with neither token let a row with both story: and N/A:
+#    through, which the one-per-row rule forbids.
 sed -n '/^## Destination-needs/,/^## /p' "$SPEC" | grep "^|" \
   | grep -iv "^|[[:space:]]*source field" | grep -v "^|[-|[:space:]]*$" \
-  | grep -vc "story:\|N/A:"   # want 0
+  | awk '{ n = gsub(/story:/, "&") + gsub(/N\/A:/, "&"); if (n != 1) c++ } END { print c+0 }'   # want 0
 # 4. Every D-N heading has a body
 grep -c "^### D-[0-9]" "$SPEC"
 ```
@@ -924,7 +934,9 @@ ceremony_upgraded_from: <omit unless the class ratcheted mid-run>
 necessity: <proceed|already-done|not-needed|superseded-by BUILD-XXXX|out-of-scope|blocked-on <artifact>>
 necessity_by_scope: <omit unless the story bundles several requests; otherwise one entry
   per scope item, each ending in its own terminal outcome — see Phase 2>
-capability: <engine-gap|api-gap|exposure-gap|plugin-gap|prior-art-found|already-supported>
+capability: <engine-gap|api-gap|exposure-gap|plugin-gap|prior-art-found|already-supported|n/a-terminated-at-necessity>
+# use n/a-terminated-at-necessity when the run ends in Phase 2 (e.g. necessity blocked-on
+# or out-of-scope) and never reaches a Phase 3 capability outcome
 evidence_grade: <A|B|C|D>
 ---
 
