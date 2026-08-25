@@ -1,0 +1,33 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/original-triggers: '[{"type":"ConfigChange"}]'
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/${BUILD_NAME}
+  labels:
+    app: ruby-hello-world
+    build-type: docker
+  name: ${BUILD_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  output:
+    image: ${REGISTRY}/${NAMESPACE}/ruby-hello-world:latest
+  paramValues:
+  - configMapValue: null
+    name: dockerfile
+    secretValue: null
+    value: Dockerfile
+  - name: registries-insecure
+    values:
+    - configMapValue: null
+      secretValue: null
+      value: ${REGISTRY}
+  source:
+    git:
+      revision: master
+      url: https://github.com/openshift/ruby-hello-world.git
+    type: Git
+  strategy:
+    kind: ClusterBuildStrategy
+    name: ${BUILD_STRATEGY}

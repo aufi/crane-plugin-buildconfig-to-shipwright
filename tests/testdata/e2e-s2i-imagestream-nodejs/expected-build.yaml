@@ -1,0 +1,36 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/original-triggers: '[{"type":"ConfigChange"},{"type":"ImageChange","imageChange":{}}]'
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/${BUILD_NAME}
+  labels:
+    application: sample-nodejs
+  name: ${BUILD_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  env:
+  - name: NPM_MIRROR
+    value: https://registry.npmjs.org
+  output:
+    image: ${REGISTRY}/${NAMESPACE}/${BUILD_NAME}:latest
+  paramValues:
+  - configMapValue: null
+    name: builder-image
+    secretValue: null
+    value: ${BUILDER_IMAGE}
+  - name: registries-insecure
+    values:
+    - configMapValue: null
+      secretValue: null
+      value: ${REGISTRY}
+  source:
+    contextDir: source-build
+    git:
+      revision: main
+      url: https://github.com/shipwright-io/sample-nodejs
+    type: Git
+  strategy:
+    kind: ClusterBuildStrategy
+    name: ${BUILD_STRATEGY}
