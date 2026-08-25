@@ -241,7 +241,7 @@ run_case() {
     # --- Step 4: Apply the Build and confirm Shipwright registers it ---
     if [ "$EXPECT_REGISTERED" = true ]; then
         kubectl apply -f "$manifest" >/dev/null
-        if kubectl wait --for=condition=Registered=True "build/$BUILD_NAME" -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1; then
+        if kubectl wait --for=jsonpath='{.status.registered}'=True "build/$BUILD_NAME" -n "$NAMESPACE" --timeout=120s >/dev/null 2>&1; then
             pass "$name: Build registered by Shipwright (spec accepted)"
         else
             fail "$name: Build not registered by Shipwright"
