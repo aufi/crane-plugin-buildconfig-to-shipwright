@@ -229,10 +229,11 @@ These tests verify the transformation logic works correctly without requiring a 
 
 ### 3. Cluster E2E Tests
 Full end-to-end validation on a live Minikube cluster with Tekton, Shipwright, and
-the fake BuildConfig CRD. It applies a source BuildConfig (an S2I build with
-ImageStream builder and output references), runs the standard `crane transform` +
-`crane apply` flow, verifies the generated Shipwright Build manifest, applies it to
-the cluster, and runs a BuildRun to confirm the image build succeeds.
+the fake BuildConfig CRD. It runs a case per source BuildConfig — an S2I build with
+ImageStream builder and output references, and a Docker (Dockerfile) build — through
+the standard `crane transform` + `crane apply` flow, verifies each generated
+Shipwright Build manifest, applies it to the cluster, and runs a BuildRun to confirm
+the image build succeeds.
 
 ```bash
 # Requires a cluster from ./hack/setup-minikube-shipwright.sh + ./hack/fake-minikube-buildconfig.sh

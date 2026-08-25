@@ -45,6 +45,7 @@ CASES_DIR="$SCRIPT_DIR/testdata"
 CASE_GLOB="e2e-*"
 WORK_DIR=$(mktemp -d)
 PLUGIN_DIR="$WORK_DIR/plugins"
+mkdir -p "$PLUGIN_DIR"
 PLUGIN_BIN="$PLUGIN_DIR/crane-plugin-buildconfig-to-shipwright"
 
 # Internal OpenShift registry the fallback output URL uses; testcase.env rewrites it.
@@ -165,9 +166,13 @@ run_case() {
     fi
 
     # Per-case config. testcase.env references OCP_REGISTRY (exported above).
-    # Reset expectation defaults so cases can omit them.
-    local NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY BUILD_STRATEGY OPTIONAL_FLAGS
-    local EXPECT_REGISTERED=false RUN_BUILDRUN=false EXPECT_BUILDRUN=Succeeded BUILD_TIMEOUT=900s
+    # Seed the overridable vars from the inherited environment so testcase.env's
+    # ${VAR:-default} form keeps a caller override; a bare `local` would blank them
+    # first and always fall through to the default. Expectation vars get defaults
+    # here since the cases assign them unconditionally.
+    local NAMESPACE="${NAMESPACE:-}" BUILD_NAME="${BUILD_NAME:-}" BUILDER_IMAGE="${BUILDER_IMAGE:-}"
+    local REGISTRY="${REGISTRY:-}" BUILD_STRATEGY="${BUILD_STRATEGY:-}" OPTIONAL_FLAGS
+    local EXPECT_REGISTERED=false RUN_BUILDRUN=false EXPECT_BUILDRUN=Succeeded BUILD_TIMEOUT="${BUILD_TIMEOUT:-900s}"
     # shellcheck disable=SC1090
     source "$case_dir/testcase.env"
     export NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY BUILD_STRATEGY
