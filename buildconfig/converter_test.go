@@ -131,6 +131,36 @@ func TestParseOptionalFields(t *testing.T) {
 			},
 		},
 		{
+			name: "registry lists are trimmed and blanks dropped",
+			extras: map[string]string{
+				"search-registries":   "docker.io,,quay.io",
+				"insecure-registries": " my-registry.local:5000 , other.local ",
+			},
+			check: func(t *testing.T, opts PluginOptionalFields) {
+				if got := strings.Join(opts.SearchRegistries, ","); got != "docker.io,quay.io" {
+					t.Errorf("SearchRegistries: expected docker.io,quay.io, got %q", got)
+				}
+				if got := strings.Join(opts.InsecureRegistries, ","); got != "my-registry.local:5000,other.local" {
+					t.Errorf("InsecureRegistries: expected my-registry.local:5000,other.local, got %q", got)
+				}
+			},
+		},
+		{
+			name: "registry lists with nothing left are nil",
+			extras: map[string]string{
+				"search-registries": ",",
+				"block-registries":  " , ",
+			},
+			check: func(t *testing.T, opts PluginOptionalFields) {
+				if opts.SearchRegistries != nil {
+					t.Errorf("SearchRegistries should be nil, got %v", opts.SearchRegistries)
+				}
+				if opts.BlockRegistries != nil {
+					t.Errorf("BlockRegistries should be nil, got %v", opts.BlockRegistries)
+				}
+			},
+		},
+		{
 			name: "strategy mapping parsed",
 			extras: map[string]string{
 				"default-build-strategy": "docker=my-buildah,s2i=my-s2i",
@@ -618,10 +648,7 @@ func TestConvertRegistryParams(t *testing.T) {
 	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
 	json.Unmarshal(jsonBytes, b)
 
-	paramsByName := map[string]shipwrightv1beta1.ParamValue{}
-	for _, pv := range b.Spec.ParamValues {
-		paramsByName[pv.Name] = pv
-	}
+	paramsByName := paramValuesByName(b)
 
 	// Search registries
 	searchParam, ok := paramsByName["registries-search"]
@@ -3407,5 +3434,139 @@ func TestServiceAccountMappedNotLoggedWithoutTemplate(t *testing.T) {
 
 	if infos := logMessages(hook, logrus.InfoLevel, "Mapped serviceAccount"); len(infos) != 0 {
 		t.Errorf("expected no mapped-serviceAccount info when no template is written, got: %v", infos)
+	}
+}
+
+// registriesBuildConfigRequest builds a minimal Docker-strategy BuildConfig request with
+// the given registry extras, for exercising addRegistries edge cases.
+func registriesBuildConfigRequest(extras map[string]string) transform.PluginRequest {
+	req := buildConfigRequest("registries-app")
+	req.Extras = extras
+	return req
+}
+
+// paramValuesByName indexes a Build's paramValues for assertion.
+func paramValuesByName(b *shipwrightv1beta1.Build) map[string]shipwrightv1beta1.ParamValue {
+	byName := map[string]shipwrightv1beta1.ParamValue{}
+	for _, pv := range b.Spec.ParamValues {
+		byName[pv.Name] = pv
+	}
+	return byName
+}
+
+// TestConvertRegistryParamsEdgeCases covers what addRegistries emits for malformed
+// registry lists. ParseOptionalFields trims each entry and drops blanks, so a stray
+// comma or padding never reaches the strategy's registries.conf, and a list with
+// nothing left emits no param at all.
+func TestConvertRegistryParamsEdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		extras     map[string]string
+		wantParams map[string][]string // param name -> expected values; absent key = param must not be emitted
+	}{
+		{
+			name:       "no registry extras emits no registry params",
+			extras:     map[string]string{},
+			wantParams: map[string][]string{},
+		},
+		{
+			name: "empty strings are ignored entirely",
+			extras: map[string]string{
+				SearchRegistriesFlag:   "",
+				InsecureRegistriesFlag: "",
+				BlockRegistriesFlag:    "",
+			},
+			wantParams: map[string][]string{},
+		},
+		{
+			name:   "single value per list",
+			extras: map[string]string{SearchRegistriesFlag: "docker.io"},
+			wantParams: map[string][]string{
+				"registries-search": {"docker.io"},
+			},
+		},
+		{
+			name:   "blank entry between commas is dropped",
+			extras: map[string]string{SearchRegistriesFlag: "docker.io,,quay.io"},
+			wantParams: map[string][]string{
+				"registries-search": {"docker.io", "quay.io"},
+			},
+		},
+		{
+			name:   "surrounding whitespace is trimmed",
+			extras: map[string]string{InsecureRegistriesFlag: " my-registry.local:5000 , other.local "},
+			wantParams: map[string][]string{
+				"registries-insecure": {"my-registry.local:5000", "other.local"},
+			},
+		},
+		{
+			name:       "lone comma emits no param",
+			extras:     map[string]string{BlockRegistriesFlag: ","},
+			wantParams: map[string][]string{},
+		},
+		{
+			name:       "whitespace-only entries emit no param",
+			extras:     map[string]string{BlockRegistriesFlag: " , "},
+			wantParams: map[string][]string{},
+		},
+		{
+			name: "all three lists are emitted independently",
+			extras: map[string]string{
+				SearchRegistriesFlag:   "docker.io,quay.io",
+				InsecureRegistriesFlag: "my-registry.local:5000",
+				BlockRegistriesFlag:    "blocked.io",
+			},
+			wantParams: map[string][]string{
+				"registries-search":   {"docker.io", "quay.io"},
+				"registries-insecure": {"my-registry.local:5000"},
+				"registries-block":    {"blocked.io"},
+			},
+		},
+	}
+
+	registryParams := []string{"registries-search", "registries-insecure", "registries-block"}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+
+			resp, err := plugin.Run(registriesBuildConfigRequest(tt.extras))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			b := decodeBuild(t, resp)
+			byName := paramValuesByName(b)
+
+			for _, name := range registryParams {
+				param, present := byName[name]
+				want, wanted := tt.wantParams[name]
+
+				if !wanted {
+					if present {
+						t.Errorf("param %q should not be emitted, got %+v", name, param.Values)
+					}
+					continue
+				}
+
+				if !present {
+					t.Fatalf("missing param %q", name)
+				}
+				if len(param.Values) != len(want) {
+					t.Fatalf("param %q: expected %d values %q, got %d: %+v",
+						name, len(want), want, len(param.Values), param.Values)
+				}
+				for i, wantVal := range want {
+					got := param.Values[i]
+					if got.Value == nil {
+						t.Errorf("param %q value %d: expected %q, got nil", name, i, wantVal)
+						continue
+					}
+					if *got.Value != wantVal {
+						t.Errorf("param %q value %d: expected %q, got %q", name, i, wantVal, *got.Value)
+					}
+				}
+			}
+		})
 	}
 }
