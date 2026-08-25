@@ -34,7 +34,10 @@ jobs:
         run: |
           git clone https://github.com/konveyor/crane.git /tmp/crane
           cd /tmp/crane
-          git checkout 45826fe4367a4522bfb1557e6432eaeaf49b15f3 # v0.10.0
+          # Track main: this plugin returns the Shipwright Build via NewResources,
+          # which crane only folds into the transform stage from PR #766 (2026-08-13),
+          # after the v0.10.0 tag. On v0.10.0 the Build is dropped and the stage
+          # kustomization ends up empty.
           go build -o crane .
           sudo mv crane /usr/local/bin/
           crane version
