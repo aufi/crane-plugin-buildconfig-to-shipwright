@@ -9,13 +9,14 @@
 #
 # Each test case lives in tests/testdata/e2e-<case>/ and contains:
 #   buildconfig.yaml      the source BuildConfig applied to the cluster
-#   case.env              config + transform flags + cluster/build expectations
-#   expect-manifest.txt   assertions on the converted Shipwright Build manifest
+#   testcase.env              config + transform flags + cluster/build expectations
+#   expected-build.yaml     full expected Build YAML, diffed against the output
 #
 # Per case the flow is:
 #   1. Apply the source BuildConfig to the cluster.
 #   2. Convert it with the standard `crane transform` + `crane apply` flow.
-#   3. Verify the generated Shipwright Build manifest (expect-manifest.txt).
+#   3. Diff the generated Shipwright Build manifest against the expected YAML
+#      golden (expected-build.yaml).
 #   4. Apply the Build and confirm Shipwright registers it (if EXPECT_REGISTERED).
 #   5. Run a BuildRun and confirm the build result (if RUN_BUILDRUN).
 #
@@ -46,7 +47,7 @@ WORK_DIR=$(mktemp -d)
 PLUGIN_DIR="$WORK_DIR/plugins"
 PLUGIN_BIN="$PLUGIN_DIR/crane-plugin-buildconfig-to-shipwright"
 
-# Internal OpenShift registry the fallback output URL uses; case.env rewrites it.
+# Internal OpenShift registry the fallback output URL uses; testcase.env rewrites it.
 export OCP_REGISTRY="image-registry.openshift-image-registry.svc:5000"
 
 SKIP_BUILD=false
@@ -93,7 +94,7 @@ check_prereqs() {
         exit 1
     fi
     # The ClusterBuildStrategy a case needs is case-specific (see BUILD_STRATEGY
-    # in case.env); it is verified per case in run_case. Here we only confirm
+    # in testcase.env); it is verified per case in run_case. Here we only confirm
     # Shipwright's strategy CRD is present at all.
     if ! kubectl get crd clusterbuildstrategies.shipwright.io >/dev/null 2>&1; then
         echo "ERROR: Shipwright not installed. Run ./hack/setup-minikube-shipwright.sh first." >&2
@@ -112,28 +113,22 @@ expand() {
     printf '%s' "$s"
 }
 
-# Evaluate expect-manifest.txt against the generated Build manifest.
-assert_manifest() {
-    local manifest="$1" exp_file="$2" line negate pat
+# Diff the generated Build manifest against the expected YAML golden, expanding
+# the ${VAR} placeholders in the golden first. The full unified diff is printed
+# on mismatch so the exact field that drifted is visible before any cluster apply.
+assert_manifest_yaml() {
+    local manifest="$1" golden="$2" expanded difffile line
+    expanded=$(mktemp -p "$WORK_DIR")
+    difffile=$(mktemp -p "$WORK_DIR")
     while IFS= read -r line || [ -n "$line" ]; do
-        [[ -z "$line" || "$line" == \#* ]] && continue
-        negate=false
-        if [[ "$line" == '!'* ]]; then negate=true; line="${line#!}"; fi
-        pat=$(expand "$line")
-        if [ "$negate" = true ]; then
-            if grep -qF -- "$pat" "$manifest"; then
-                fail "manifest: pattern present but expected absent [$pat]"
-            else
-                pass "manifest: absent [$pat]"
-            fi
-        else
-            if grep -qF -- "$pat" "$manifest"; then
-                pass "manifest: [$pat]"
-            else
-                fail "manifest: missing [$pat]"
-            fi
-        fi
-    done < "$exp_file"
+        expand "$line"; printf '\n'
+    done < "$golden" > "$expanded"
+    if diff -u "$expanded" "$manifest" > "$difffile" 2>&1; then
+        pass "manifest: matches expected YAML"
+    else
+        fail "manifest: differs from expected YAML"
+        sed 's/^/    /' "$difffile"
+    fi
 }
 
 collect_diagnostics() {
@@ -164,17 +159,17 @@ run_case() {
 
     log "Test case: $name"
 
-    if [ ! -f "$case_dir/case.env" ] || [ ! -f "$case_dir/buildconfig.yaml" ]; then
-        fail "$name: missing case.env or buildconfig.yaml"
+    if [ ! -f "$case_dir/testcase.env" ] || [ ! -f "$case_dir/buildconfig.yaml" ]; then
+        fail "$name: missing testcase.env or buildconfig.yaml"
         return
     fi
 
-    # Per-case config. case.env references OCP_REGISTRY (exported above).
+    # Per-case config. testcase.env references OCP_REGISTRY (exported above).
     # Reset expectation defaults so cases can omit them.
     local NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY BUILD_STRATEGY OPTIONAL_FLAGS
     local EXPECT_REGISTERED=false RUN_BUILDRUN=false EXPECT_BUILDRUN=Succeeded BUILD_TIMEOUT=900s
     # shellcheck disable=SC1090
-    source "$case_dir/case.env"
+    source "$case_dir/testcase.env"
     export NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY BUILD_STRATEGY
 
     info "namespace=$NAMESPACE build=$BUILD_NAME builder=$BUILDER_IMAGE registry=$REGISTRY strategy=$BUILD_STRATEGY"
@@ -223,7 +218,7 @@ run_case() {
         return
     fi
     pass "$name: Build manifest generated ($(basename "$manifest"))"
-    assert_manifest "$manifest" "$case_dir/expect-manifest.txt"
+    assert_manifest_yaml "$manifest" "$case_dir/expected-build.yaml"
 
     # BuildConfig original must be whited out of the applied output.
     if grep -rl "kind: BuildConfig" "$output_dir" >/dev/null 2>&1; then
@@ -265,11 +260,28 @@ spec:
     name: ${BUILD_NAME}
 EOF
 )
-        info "$name: created BuildRun $buildrun; waiting up to $BUILD_TIMEOUT for $EXPECT_BUILDRUN..."
-        if kubectl wait --for=condition="${EXPECT_BUILDRUN}=True" "buildrun/$buildrun" -n "$NAMESPACE" --timeout="$BUILD_TIMEOUT" >/dev/null 2>&1; then
-            pass "$name: BuildRun result $EXPECT_BUILDRUN — image built and pushed"
+        # A BuildRun ends by setting its Succeeded condition to True or False.
+        # kubectl wait --for=condition=Succeeded=True never matches a failed run
+        # (status False), so it would block the full timeout on any failure. Poll
+        # instead and stop the moment the condition reaches either terminal state.
+        local want=True
+        case "$EXPECT_BUILDRUN" in
+            Failed|False) want=False ;;
+        esac
+        info "$name: created BuildRun $buildrun; waiting up to $BUILD_TIMEOUT for terminal result (expect $EXPECT_BUILDRUN)..."
+        local status="" deadline=$((SECONDS + ${BUILD_TIMEOUT%s}))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+            status=$(kubectl get "buildrun/$buildrun" -n "$NAMESPACE" \
+                -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || true)
+            if [ "$status" = True ] || [ "$status" = False ]; then break; fi
+            sleep 5
+        done
+        if [ "$status" = "$want" ]; then
+            pass "$name: BuildRun reached expected result ($EXPECT_BUILDRUN)"
         else
-            fail "$name: BuildRun did not reach $EXPECT_BUILDRUN"
+            fail "$name: BuildRun result=${status:-<timeout>}, expected $EXPECT_BUILDRUN"
+            kubectl get "buildrun/$buildrun" -n "$NAMESPACE" \
+                -o jsonpath='{range .status.conditions[?(@.type=="Succeeded")]}{.reason}: {.message}{end}' 2>/dev/null || true
             collect_diagnostics
             case_cleanup
             return
