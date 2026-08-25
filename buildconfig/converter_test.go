@@ -2172,11 +2172,14 @@ func buildConfigRequest(name string, opts ...bcOption) transform.PluginRequest {
 			"type":           "Docker",
 			"dockerStrategy": map[string]interface{}{},
 		},
+		// An explicit pushSecret keeps the skeleton warning-free: BUILD-2316
+		// warns when a DockerImage output names no push credential.
 		"output": map[string]interface{}{
 			"to": map[string]interface{}{
 				"kind": "DockerImage",
 				"name": "quay.io/example/myapp:latest",
 			},
+			"pushSecret": map[string]interface{}{"name": "quay-push-secret"},
 		},
 	}
 	for _, opt := range opts {
