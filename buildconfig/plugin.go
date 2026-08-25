@@ -3,6 +3,7 @@ package buildconfig
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/konveyor/crane-lib/transform"
 	buildv1 "github.com/openshift/api/build/v1"
@@ -154,15 +155,22 @@ func ParseOptionalFields(extras map[string]string) (PluginOptionalFields, error)
 	if v, ok := extras[DefaultBuildStrategyFlag]; ok && v != "" {
 		opts.StrategyMapping = transform.ParseOptionalFieldMapVal(v)
 	}
-	if v, ok := extras[SearchRegistriesFlag]; ok && v != "" {
-		opts.SearchRegistries = transform.ParseOptionalFieldSliceVal(v)
-	}
-	if v, ok := extras[InsecureRegistriesFlag]; ok && v != "" {
-		opts.InsecureRegistries = transform.ParseOptionalFieldSliceVal(v)
-	}
-	if v, ok := extras[BlockRegistriesFlag]; ok && v != "" {
-		opts.BlockRegistries = transform.ParseOptionalFieldSliceVal(v)
-	}
+	opts.SearchRegistries = parseRegistryList(extras[SearchRegistriesFlag])
+	opts.InsecureRegistries = parseRegistryList(extras[InsecureRegistriesFlag])
+	opts.BlockRegistries = parseRegistryList(extras[BlockRegistriesFlag])
 
 	return opts, nil
+}
+
+// parseRegistryList splits a comma-separated registry list, trims each entry and
+// drops blanks, so a stray comma or padding never reaches registries.conf. A list
+// with nothing left yields nil, and addRegistries then emits no param for it.
+func parseRegistryList(v string) []string {
+	var out []string
+	for _, entry := range strings.Split(v, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
