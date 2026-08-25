@@ -6,7 +6,7 @@
 
 kind: Build
 shipwright.io/v1beta1
-name: source-to-image
+name: ${S2I_STRATEGY}
 builder-image
 ${BUILDER_IMAGE}
 ${REGISTRY}/${NAMESPACE}/${BUILD_NAME}

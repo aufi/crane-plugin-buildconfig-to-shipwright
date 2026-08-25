@@ -92,8 +92,11 @@ check_prereqs() {
         echo "ERROR: BuildConfig CRD missing. Run ./hack/fake-minikube-buildconfig.sh first." >&2
         exit 1
     fi
-    if ! kubectl get clusterbuildstrategy source-to-image >/dev/null 2>&1; then
-        echo "ERROR: source-to-image ClusterBuildStrategy missing. Run ./hack/setup-minikube-shipwright.sh first." >&2
+    # The ClusterBuildStrategy a case needs is case-specific (see S2I_STRATEGY in
+    # case.env); it is verified per case in run_case. Here we only confirm
+    # Shipwright's strategy CRD is present at all.
+    if ! kubectl get crd clusterbuildstrategies.shipwright.io >/dev/null 2>&1; then
+        echo "ERROR: Shipwright not installed. Run ./hack/setup-minikube-shipwright.sh first." >&2
         exit 1
     fi
 }
@@ -105,6 +108,7 @@ expand() {
     s="${s//\$\{BUILD_NAME\}/$BUILD_NAME}"
     s="${s//\$\{BUILDER_IMAGE\}/$BUILDER_IMAGE}"
     s="${s//\$\{REGISTRY\}/$REGISTRY}"
+    s="${s//\$\{S2I_STRATEGY\}/$S2I_STRATEGY}"
     printf '%s' "$s"
 }
 
@@ -167,13 +171,19 @@ run_case() {
 
     # Per-case config. case.env references OCP_REGISTRY (exported above).
     # Reset expectation defaults so cases can omit them.
-    local NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY OPTIONAL_FLAGS
+    local NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY S2I_STRATEGY OPTIONAL_FLAGS
     local EXPECT_REGISTERED=false RUN_BUILDRUN=false EXPECT_BUILDRUN=Succeeded BUILD_TIMEOUT=900s
     # shellcheck disable=SC1090
     source "$case_dir/case.env"
-    export NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY
+    export NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY S2I_STRATEGY
 
-    info "namespace=$NAMESPACE build=$BUILD_NAME builder=$BUILDER_IMAGE registry=$REGISTRY"
+    info "namespace=$NAMESPACE build=$BUILD_NAME builder=$BUILDER_IMAGE registry=$REGISTRY strategy=$S2I_STRATEGY"
+
+    # The Build targets S2I_STRATEGY; it must exist on the cluster.
+    if [ -n "$S2I_STRATEGY" ] && ! kubectl get clusterbuildstrategy "$S2I_STRATEGY" >/dev/null 2>&1; then
+        fail "$name: ClusterBuildStrategy $S2I_STRATEGY missing (run ./hack/setup-minikube-shipwright.sh)"
+        return
+    fi
 
     local case_work="$WORK_DIR/$name"
     local export_dir="$case_work/export"
