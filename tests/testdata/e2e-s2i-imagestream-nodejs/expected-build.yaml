@@ -15,16 +15,12 @@ spec:
     value: https://registry.npmjs.org
   output:
     image: ${REGISTRY}/${NAMESPACE}/${BUILD_NAME}:latest
+    insecure: true
   paramValues:
   - configMapValue: null
     name: builder-image
     secretValue: null
     value: ${BUILDER_IMAGE}
-  - name: registries-insecure
-    values:
-    - configMapValue: null
-      secretValue: null
-      value: ${REGISTRY}
   source:
     contextDir: source-build
     git:

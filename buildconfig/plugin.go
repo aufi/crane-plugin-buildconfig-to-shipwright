@@ -3,6 +3,7 @@ package buildconfig
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/konveyor/crane-lib/transform"
 	buildv1 "github.com/openshift/api/build/v1"
@@ -18,6 +19,7 @@ const (
 	SearchRegistriesFlag     = "search-registries"
 	InsecureRegistriesFlag   = "insecure-registries"
 	BlockRegistriesFlag      = "block-registries"
+	InsecureOutputFlag       = "insecure-output"
 )
 
 type BuildConfigTransformPlugin struct {
@@ -58,6 +60,11 @@ func (p *BuildConfigTransformPlugin) Metadata() transform.PluginMetadata {
 				FlagName: BlockRegistriesFlag,
 				Help:     "Comma-separated list of blocked registries for Buildah",
 				Example:  "docker.io",
+			},
+			{
+				FlagName: InsecureOutputFlag,
+				Help:     "Set spec.output.insecure=true so a Shipwright-managed push can target an insecure (HTTP/self-signed) registry",
+				Example:  "true",
 			},
 		},
 		RequestVersion:  []transform.Version{transform.V1},
@@ -140,6 +147,7 @@ type PluginOptionalFields struct {
 	SearchRegistries   []string
 	InsecureRegistries []string
 	BlockRegistries    []string
+	InsecureOutput     bool
 }
 
 func ParseOptionalFields(extras map[string]string) (PluginOptionalFields, error) {
@@ -162,6 +170,9 @@ func ParseOptionalFields(extras map[string]string) (PluginOptionalFields, error)
 	}
 	if v, ok := extras[BlockRegistriesFlag]; ok && v != "" {
 		opts.BlockRegistries = transform.ParseOptionalFieldSliceVal(v)
+	}
+	if v, ok := extras[InsecureOutputFlag]; ok {
+		opts.InsecureOutput = strings.EqualFold(v, "true")
 	}
 
 	return opts, nil

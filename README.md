@@ -32,6 +32,7 @@ All other resource types are passed through unchanged.
 | `search-registries` | `reg1,reg2` | Search registries for Buildah |
 | `insecure-registries` | `reg1,reg2` | Insecure registries for Buildah |
 | `block-registries` | `reg1,reg2` | Blocked registries for Buildah |
+| `insecure-output` | `true` | Set `spec.output.insecure=true` so a Shipwright-managed push (e.g. `source-to-image`) can target an insecure (HTTP/self-signed) registry |
 
 ## Prerequisites
 

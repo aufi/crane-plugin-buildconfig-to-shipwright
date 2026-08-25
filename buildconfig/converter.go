@@ -969,6 +969,14 @@ func (c *Converter) processOutput(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 		b.Spec.Output.PushSecret = &bc.Spec.Output.PushSecret.Name
 	}
 
+	// Strategies that rely on a Shipwright-managed push (e.g. source-to-image)
+	// only honor spec.output.insecure to target an HTTP/self-signed registry;
+	// they have no registries-insecure parameter.
+	if c.Opts.InsecureOutput {
+		insecure := true
+		b.Spec.Output.Insecure = &insecure
+	}
+
 	c.processOutputImageLabels(bc, b)
 }
 

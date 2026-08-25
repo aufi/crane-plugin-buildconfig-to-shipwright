@@ -144,6 +144,28 @@ func TestParseOptionalFields(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "insecure output true parsed case-insensitively",
+			extras: map[string]string{
+				"insecure-output": "True",
+			},
+			check: func(t *testing.T, opts PluginOptionalFields) {
+				if !opts.InsecureOutput {
+					t.Error("InsecureOutput should be true")
+				}
+			},
+		},
+		{
+			name: "insecure output non-true value stays false",
+			extras: map[string]string{
+				"insecure-output": "yes",
+			},
+			check: func(t *testing.T, opts PluginOptionalFields) {
+				if opts.InsecureOutput {
+					t.Error("InsecureOutput should be false for a non-true value")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1012,6 +1034,77 @@ func TestConvertOutputImageStreamTag(t *testing.T) {
 
 			if b.Spec.Output.Image != tt.wantImage {
 				t.Errorf("output image = %q, want %q", b.Spec.Output.Image, tt.wantImage)
+			}
+		})
+	}
+}
+
+func TestConvertOutputInsecure(t *testing.T) {
+	tests := []struct {
+		name         string
+		extras       map[string]string
+		wantInsecure *bool
+	}{
+		{
+			name:         "flag unset leaves output.insecure nil",
+			extras:       nil,
+			wantInsecure: nil,
+		},
+		{
+			name:         "insecure-output=true sets output.insecure",
+			extras:       map[string]string{"insecure-output": "true"},
+			wantInsecure: func() *bool { b := true; return &b }(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+			request := transform.PluginRequest{
+				Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+					"apiVersion": "build.openshift.io/v1",
+					"kind":       "BuildConfig",
+					"metadata": map[string]interface{}{
+						"name":      "myapp",
+						"namespace": "myns",
+					},
+					"spec": map[string]interface{}{
+						"source": map[string]interface{}{
+							"type": "Git",
+							"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+						},
+						"strategy": map[string]interface{}{
+							"type":           "Docker",
+							"dockerStrategy": map[string]interface{}{},
+						},
+						"output": map[string]interface{}{
+							"to": map[string]interface{}{
+								"kind": "DockerImage",
+								"name": "quay.io/org/myapp:latest",
+							},
+						},
+					},
+				}},
+				Extras: tt.extras,
+			}
+
+			resp, err := plugin.Run(request)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			b := &shipwrightv1beta1.Build{}
+			jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+			json.Unmarshal(jsonBytes, b)
+
+			got := b.Spec.Output.Insecure
+			switch {
+			case tt.wantInsecure == nil && got != nil:
+				t.Errorf("output.insecure = %v, want nil", *got)
+			case tt.wantInsecure != nil && got == nil:
+				t.Errorf("output.insecure = nil, want %v", *tt.wantInsecure)
+			case tt.wantInsecure != nil && *got != *tt.wantInsecure:
+				t.Errorf("output.insecure = %v, want %v", *got, *tt.wantInsecure)
 			}
 		})
 	}
