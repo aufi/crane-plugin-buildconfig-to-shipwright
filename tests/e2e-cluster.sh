@@ -192,7 +192,7 @@ run_case() {
     fi
 
     # --- Step 2: crane transform + apply ---
-    crane transform \
+    crane transform BuildConfigPlugin \
         --export-dir "$export_dir" \
         --transform-dir "$transform_dir" \
         --plugin-dir "$PLUGIN_DIR" \
