@@ -90,15 +90,10 @@ jobs:
           kubectl create namespace my-app
           kubectl get namespace my-app
 
-      # TODO: Add E2E test execution here
-      # - name: Run E2E tests
-      #   run: |
-      #     # Placeholder for E2E test execution
-      #     # Example:
-      #     # ./tests/e2e-minikube.sh
-      #     # or
-      #     # go test -v ./tests/e2e/...
-      #     echo "E2E tests will be implemented here"
+      - name: Run cluster E2E test
+        run: |
+          # BuildConfig → crane transform → Shipwright Build → BuildRun on the cluster
+          ./tests/e2e-cluster.sh
 
       - name: Collect logs on failure
         if: failure()

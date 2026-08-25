@@ -228,17 +228,21 @@ Tests the plugin binary in isolation (with crane), processing input YAML manifes
 These tests verify the transformation logic works correctly without requiring a live cluster.
 
 ### 3. Cluster E2E Tests
-Full end-to-end tests on real Kubernetes clusters, validating the entire workflow:
-- **Minikube** - with fake BuildConfig CRD (CRD only, no build functionality)
-- **OpenShift** - with full OpenShift Builds/Shipwright installation
-
-Tests the complete flow: export from cluster → transformation → import → verify Shipwright Builds are valid and functional (trigger actual builds with configured strategies).
+Full end-to-end validation on a live Minikube cluster with Tekton, Shipwright, and
+the fake BuildConfig CRD. It applies a source BuildConfig (an S2I build with
+ImageStream builder and output references), runs the standard `crane transform` +
+`crane apply` flow, verifies the generated Shipwright Build manifest, applies it to
+the cluster, and runs a BuildRun to confirm the image build succeeds.
 
 ```bash
-# TBD
+# Requires a cluster from ./hack/setup-minikube-shipwright.sh + ./hack/fake-minikube-buildconfig.sh
+./tests/e2e-cluster.sh
+
+# Verify the generated manifest only, skip the actual build
+./tests/e2e-cluster.sh --skip-build
 ```
 
-See [`hack/README.md`](hack/README.md) for detailed setup instructions.
+See [`hack/README.md`](hack/README.md) for detailed cluster setup instructions.
 
 ## Known limitations
 

@@ -1,0 +1,16 @@
+# Assertions on the converted Shipwright Build manifest (crane transform output).
+#
+# One fixed-string pattern per line. ${VAR} references are expanded against the
+# case.env values before matching. A leading '!' asserts the pattern is ABSENT.
+# Blank lines and '#' comments are ignored.
+
+kind: Build
+shipwright.io/v1beta1
+name: source-to-image
+builder-image
+${BUILDER_IMAGE}
+${REGISTRY}/${NAMESPACE}/${BUILD_NAME}
+registries-insecure
+github.com/shipwright-io/sample-nodejs
+revision: main
+crane.konveyor.io/converted-from
