@@ -56,7 +56,7 @@ crane version
 ### 1. Export the namespace
 
 ```bash
-crane export -n myapp --export-dir ./migration
+crane export -n myapp
 ```
 
 This exports all resources including BuildConfigs, ImageStreams, etc.
@@ -64,9 +64,7 @@ This exports all resources including BuildConfigs, ImageStreams, etc.
 ### 2. Transform with plugins
 
 ```bash
-crane transform \
-  --export-dir ./migration \
-  --transform-dir ./migration/transform \
+crane transform BuildConfigPlugin \
   --plugin-dir ./plugins
 ```
 
@@ -75,10 +73,9 @@ The plugin directory should contain the `crane-plugin-buildconfig-to-shipwright`
 To pass plugin flags, use the `--optional-flags` parameter:
 
 ```bash
-crane transform \
-  --export-dir ./migration \
-  --transform-dir ./migration/transform \
+crane transform BuildConfigPlugin \
   --plugin-dir ./plugins \
+  --overwrite \
   --optional-flags "registry-mapping=image-registry.openshift-image-registry.svc:5000=quay.io/myorg,imagestream-mapping=myns/mybuilder:latest=quay.io/myorg/builder:latest"
 ```
 
@@ -87,7 +84,7 @@ crane transform \
 After transform, the output directory contains:
 
 ```
-migration/transform/
+transform/
   resources/
     BuildConfig_build.openshift.io_v1_myapp_myapp-build.yaml  # whiteout
     Build_shipwright.io_v1beta1_myapp_myapp-build.yaml         # new Shipwright Build
@@ -100,11 +97,9 @@ Review the generated Shipwright Build YAMLs before applying.
 ### 4. Apply to the target cluster
 
 ```bash
-crane apply \
-  --transform-dir ./migration/transform \
-  --output-dir ./migration/output
+crane apply
 
-kubectl apply -f ./migration/output/resources/
+kubectl apply -f ./output/resources/
 ```
 
 ### Full example
@@ -113,25 +108,21 @@ Migrating a namespace with a Dockerfile-based BuildConfig from OpenShift to a Sh
 
 ```bash
 # Export from source cluster
-crane export -n myapp --export-dir ./migration
+crane export -n myapp
 
 # Transform — OpenShift plugin strips OCP-specific resources,
 # BuildConfig plugin converts builds to Shipwright
-crane transform \
-  --export-dir ./migration \
-  --transform-dir ./migration/transform \
+crane transform BuildConfigPlugin \
   --plugin-dir ./plugins \
   --optional-flags "registry-mapping=image-registry.openshift-image-registry.svc:5000=quay.io/myorg"
 
 # Review generated Shipwright Builds
-cat ./migration/transform/resources/Build_shipwright.io_v1beta1_myapp_*.yaml
+cat ./transform/resources/Build_shipwright.io_v1beta1_myapp_*.yaml
 
 # Apply to target cluster (Shipwright + Tekton must be installed)
-crane apply \
-  --transform-dir ./migration/transform \
-  --output-dir ./migration/output
+crane apply
 
-kubectl apply -f ./migration/output/resources/
+kubectl apply -f ./output/resources/
 ```
 
 ## Conversion example
@@ -220,10 +211,10 @@ GOTOOLCHAIN=auto go test ./...
 ```
 
 ### 2. Plugin E2E Tests
-Tests the plugin binary in isolation (with crane), processing input YAML manifest files and asserting expected output manifests.
+Tests the plugin binary in isolation (with crane), running sample exported resources through the `crane transform` + `crane apply` pipeline and asserting the output manifests.
 
 ```bash
-# TBD, or WIP ./tests/e2e-transform.sh
+./tests/e2e-transform.sh
 ```
 
 These tests verify the transformation logic works correctly without requiring a live cluster.
