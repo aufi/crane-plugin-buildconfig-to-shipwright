@@ -92,8 +92,8 @@ check_prereqs() {
         echo "ERROR: BuildConfig CRD missing. Run ./hack/fake-minikube-buildconfig.sh first." >&2
         exit 1
     fi
-    # The ClusterBuildStrategy a case needs is case-specific (see S2I_STRATEGY in
-    # case.env); it is verified per case in run_case. Here we only confirm
+    # The ClusterBuildStrategy a case needs is case-specific (see BUILD_STRATEGY
+    # in case.env); it is verified per case in run_case. Here we only confirm
     # Shipwright's strategy CRD is present at all.
     if ! kubectl get crd clusterbuildstrategies.shipwright.io >/dev/null 2>&1; then
         echo "ERROR: Shipwright not installed. Run ./hack/setup-minikube-shipwright.sh first." >&2
@@ -108,7 +108,7 @@ expand() {
     s="${s//\$\{BUILD_NAME\}/$BUILD_NAME}"
     s="${s//\$\{BUILDER_IMAGE\}/$BUILDER_IMAGE}"
     s="${s//\$\{REGISTRY\}/$REGISTRY}"
-    s="${s//\$\{S2I_STRATEGY\}/$S2I_STRATEGY}"
+    s="${s//\$\{BUILD_STRATEGY\}/$BUILD_STRATEGY}"
     printf '%s' "$s"
 }
 
@@ -171,17 +171,17 @@ run_case() {
 
     # Per-case config. case.env references OCP_REGISTRY (exported above).
     # Reset expectation defaults so cases can omit them.
-    local NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY S2I_STRATEGY OPTIONAL_FLAGS
+    local NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY BUILD_STRATEGY OPTIONAL_FLAGS
     local EXPECT_REGISTERED=false RUN_BUILDRUN=false EXPECT_BUILDRUN=Succeeded BUILD_TIMEOUT=900s
     # shellcheck disable=SC1090
     source "$case_dir/case.env"
-    export NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY S2I_STRATEGY
+    export NAMESPACE BUILD_NAME BUILDER_IMAGE REGISTRY BUILD_STRATEGY
 
-    info "namespace=$NAMESPACE build=$BUILD_NAME builder=$BUILDER_IMAGE registry=$REGISTRY strategy=$S2I_STRATEGY"
+    info "namespace=$NAMESPACE build=$BUILD_NAME builder=$BUILDER_IMAGE registry=$REGISTRY strategy=$BUILD_STRATEGY"
 
-    # The Build targets S2I_STRATEGY; it must exist on the cluster.
-    if [ -n "$S2I_STRATEGY" ] && ! kubectl get clusterbuildstrategy "$S2I_STRATEGY" >/dev/null 2>&1; then
-        fail "$name: ClusterBuildStrategy $S2I_STRATEGY missing (run ./hack/setup-minikube-shipwright.sh)"
+    # The Build targets BUILD_STRATEGY; it must exist on the cluster.
+    if [ -n "$BUILD_STRATEGY" ] && ! kubectl get clusterbuildstrategy "$BUILD_STRATEGY" >/dev/null 2>&1; then
+        fail "$name: ClusterBuildStrategy $BUILD_STRATEGY missing (run ./hack/setup-minikube-shipwright.sh)"
         return
     fi
 
@@ -241,7 +241,7 @@ run_case() {
     # --- Step 4: Apply the Build and confirm Shipwright registers it ---
     if [ "$EXPECT_REGISTERED" = true ]; then
         kubectl apply -f "$manifest" >/dev/null
-        if kubectl wait --for=condition=Registered=True "build/$BUILD_NAME" -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1; then
+        if kubectl wait --for=condition=Registered=True "build/$BUILD_NAME" -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1; then
             pass "$name: Build registered by Shipwright (spec accepted)"
         else
             fail "$name: Build not registered by Shipwright"

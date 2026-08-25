@@ -7,10 +7,12 @@
 kind: Build
 shipwright.io/v1beta1
 name: ${BUILD_STRATEGY}
-builder-image
-${BUILDER_IMAGE}
-${REGISTRY}/${NAMESPACE}/${BUILD_NAME}
+kind: ClusterBuildStrategy
+dockerfile
+value: Dockerfile
+# Output image uses the ImageStreamTag name (ruby-hello-world), not the BuildConfig name.
+image: ${REGISTRY}/${NAMESPACE}/ruby-hello-world:latest
 registries-insecure
-github.com/shipwright-io/sample-nodejs
-revision: main
+github.com/openshift/ruby-hello-world
+revision: master
 crane.konveyor.io/converted-from
