@@ -36,6 +36,14 @@ func resolveImageRef(kind, name, namespace string, opts PluginOptionalFields) (s
 	}
 }
 
+// imageRegistryHost returns the registry host[:port] of an image reference —
+// everything before the first "/". A bare reference with no path returns
+// unchanged. Used to test whether an output image lives on an insecure registry.
+func imageRegistryHost(image string) string {
+	host, _, _ := strings.Cut(image, "/")
+	return host
+}
+
 func applyRegistryMapping(imageRef string, registryMapping map[string]string) string {
 	// Iterate in a deterministic order: longest prefix first (most specific
 	// mapping wins), ties broken lexically. Plain map iteration order is

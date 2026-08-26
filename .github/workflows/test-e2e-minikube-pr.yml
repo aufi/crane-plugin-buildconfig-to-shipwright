@@ -32,12 +32,12 @@ jobs:
 
       - name: Install crane CLI
         run: |
-          git clone https://github.com/konveyor/crane.git /tmp/crane
+          git clone https://github.com/migtools/crane.git /tmp/crane
           cd /tmp/crane
-          # Track main: this plugin returns the Shipwright Build via NewResources,
-          # which crane only folds into the transform stage from PR #766 (2026-08-13),
-          # after the v0.10.0 tag. On v0.10.0 the Build is dropped and the stage
-          # kustomization ends up empty.
+          # Pin crane so an upstream change to main can't break our CI. Needs
+          # NewResources (PR #766) and positional stage selection; bump for newer
+          # crane versions.
+          git checkout d566a18f6640cd79c8568749d6621b40486d0625
           go build -o crane .
           sudo mv crane /usr/local/bin/
           crane version

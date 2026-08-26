@@ -30,9 +30,8 @@ All other resource types are passed through unchanged.
 | `imagestream-mapping` | `ns/name:tag=registry/image:tag` | Resolve ImageStreamTag references to concrete image URLs |
 | `default-build-strategy` | `docker=my-buildah,s2i=my-s2i` | Override default ClusterBuildStrategy names |
 | `search-registries` | `reg1,reg2` | Search registries for Buildah |
-| `insecure-registries` | `reg1,reg2` | Insecure registries for Buildah |
+| `insecure-registries` | `reg1,reg2` | Insecure (HTTP/self-signed) registries. Buildah gets the `registries-insecure` param; for a Shipwright-managed push (`source-to-image`) an output image on one of these registries sets `spec.output.insecure=true` |
 | `block-registries` | `reg1,reg2` | Blocked registries for Buildah |
-| `insecure-output` | `true` | Set `spec.output.insecure=true` so a Shipwright-managed push (e.g. `source-to-image`) can target an insecure (HTTP/self-signed) registry |
 
 ## Prerequisites
 

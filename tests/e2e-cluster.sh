@@ -215,8 +215,15 @@ run_case() {
         2>&1 | sed 's/^/    /'
 
     # --- Step 3: Verify the generated Shipwright Build manifest ---
-    local manifest
-    manifest=$(grep -rl "shipwright.io/v1beta1" "$output_dir" 2>/dev/null | head -1)
+    # crane apply writes both a concatenated output.yaml and per-resource files
+    # under resources/. They carry the same Build but differ in YAML list
+    # indentation, and `grep -r | head -1` picks between them nondeterministically,
+    # which flakes the golden diff. Pin output.yaml (what the goldens are written
+    # against) and only fall back to a resource file if it lacks a Build.
+    local manifest="$output_dir/output.yaml"
+    if [ ! -f "$manifest" ] || ! grep -q "shipwright.io/v1beta1" "$manifest"; then
+        manifest=$(grep -rl "shipwright.io/v1beta1" "$output_dir" 2>/dev/null | head -1)
+    fi
     if [ -z "$manifest" ]; then
         fail "$name: no Shipwright Build manifest generated"
         case_cleanup

@@ -145,24 +145,13 @@ func TestParseOptionalFields(t *testing.T) {
 			},
 		},
 		{
-			name: "insecure output true parsed case-insensitively",
+			name: "insecure registries parsed",
 			extras: map[string]string{
-				"insecure-output": "True",
+				"insecure-registries": "reg.local:80,other.local:5000",
 			},
 			check: func(t *testing.T, opts PluginOptionalFields) {
-				if !opts.InsecureOutput {
-					t.Error("InsecureOutput should be true")
-				}
-			},
-		},
-		{
-			name: "insecure output non-true value stays false",
-			extras: map[string]string{
-				"insecure-output": "yes",
-			},
-			check: func(t *testing.T, opts PluginOptionalFields) {
-				if opts.InsecureOutput {
-					t.Error("InsecureOutput should be false for a non-true value")
+				if len(opts.InsecureRegistries) != 2 {
+					t.Fatalf("expected 2 insecure registries, got %d", len(opts.InsecureRegistries))
 				}
 			},
 		},
@@ -1039,26 +1028,72 @@ func TestConvertOutputImageStreamTag(t *testing.T) {
 	}
 }
 
-func TestConvertOutputInsecure(t *testing.T) {
+// TestConvertInsecureRegistriesRouting covers how a single --insecure-registries
+// intent reaches the two push models: a strategy-managed push (buildah) gets the
+// registries-insecure param, while a Shipwright-managed push (source-to-image)
+// gets spec.output.insecure when its output image lives on an insecure registry.
+func TestConvertInsecureRegistriesRouting(t *testing.T) {
 	tests := []struct {
-		name         string
-		extras       map[string]string
-		wantInsecure *bool
+		name          string
+		strategyType  string
+		outputImage   string
+		extras        map[string]string
+		wantInsecure  *bool
+		wantParam     bool
+		wantParamVals []string
 	}{
 		{
-			name:         "flag unset leaves output.insecure nil",
-			extras:       nil,
+			name:         "docker gets registries-insecure param",
+			strategyType: "Docker",
+			outputImage:  "reg.local:80/org/app:latest",
+			extras:       map[string]string{"insecure-registries": "reg.local:80"},
 			wantInsecure: nil,
+			wantParam:    true,
+			wantParamVals: []string{"reg.local:80"},
 		},
 		{
-			name:         "insecure-output=true sets output.insecure",
-			extras:       map[string]string{"insecure-output": "true"},
+			name:         "s2i with output on insecure registry sets output.insecure",
+			strategyType: "Source",
+			outputImage:  "reg.local:80/org/app:latest",
+			extras:       map[string]string{"insecure-registries": "reg.local:80"},
 			wantInsecure: func() *bool { b := true; return &b }(),
+			wantParam:    false,
+		},
+		{
+			name:         "s2i with output on a different registry stays secure",
+			strategyType: "Source",
+			outputImage:  "quay.io/org/app:latest",
+			extras:       map[string]string{"insecure-registries": "reg.local:80"},
+			wantInsecure: nil,
+			wantParam:    false,
+		},
+		{
+			name:         "no flag leaves both unset",
+			strategyType: "Source",
+			outputImage:  "reg.local:80/org/app:latest",
+			extras:       nil,
+			wantInsecure: nil,
+			wantParam:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			strategy := map[string]interface{}{
+				"type":           "Docker",
+				"dockerStrategy": map[string]interface{}{},
+			}
+			if tt.strategyType == "Source" {
+				strategy = map[string]interface{}{
+					"type": "Source",
+					"sourceStrategy": map[string]interface{}{
+						"from": map[string]interface{}{
+							"kind": "DockerImage",
+							"name": "registry.redhat.io/ubi8/python-39:latest",
+						},
+					},
+				}
+			}
 			plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
 			request := transform.PluginRequest{
 				Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
@@ -1073,14 +1108,11 @@ func TestConvertOutputInsecure(t *testing.T) {
 							"type": "Git",
 							"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
 						},
-						"strategy": map[string]interface{}{
-							"type":           "Docker",
-							"dockerStrategy": map[string]interface{}{},
-						},
+						"strategy": strategy,
 						"output": map[string]interface{}{
 							"to": map[string]interface{}{
 								"kind": "DockerImage",
-								"name": "quay.io/org/myapp:latest",
+								"name": tt.outputImage,
 							},
 						},
 					},
@@ -1103,8 +1135,31 @@ func TestConvertOutputInsecure(t *testing.T) {
 				t.Errorf("output.insecure = %v, want nil", *got)
 			case tt.wantInsecure != nil && got == nil:
 				t.Errorf("output.insecure = nil, want %v", *tt.wantInsecure)
-			case tt.wantInsecure != nil && *got != *tt.wantInsecure:
+			case tt.wantInsecure != nil && got != nil && *got != *tt.wantInsecure:
 				t.Errorf("output.insecure = %v, want %v", *got, *tt.wantInsecure)
+			}
+
+			var param *shipwrightv1beta1.ParamValue
+			for i := range b.Spec.ParamValues {
+				if b.Spec.ParamValues[i].Name == "registries-insecure" {
+					param = &b.Spec.ParamValues[i]
+				}
+			}
+			if tt.wantParam && param == nil {
+				t.Fatal("expected registries-insecure param, got none")
+			}
+			if !tt.wantParam && param != nil {
+				t.Fatalf("unexpected registries-insecure param: %v", param.Values)
+			}
+			if tt.wantParam {
+				if len(param.Values) != len(tt.wantParamVals) {
+					t.Fatalf("registries-insecure values = %v, want %v", param.Values, tt.wantParamVals)
+				}
+				for i, want := range tt.wantParamVals {
+					if param.Values[i].Value == nil || *param.Values[i].Value != want {
+						t.Errorf("registries-insecure[%d] = %v, want %q", i, param.Values[i].Value, want)
+					}
+				}
 			}
 		})
 	}
