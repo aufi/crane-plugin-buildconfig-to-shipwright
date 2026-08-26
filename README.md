@@ -9,7 +9,7 @@ During crane's transform phase, this plugin:
 1. Detects `BuildConfig` resources in the exported namespace
 2. Whiteouts the original BuildConfig (marks it for deletion)
 3. Generates a corresponding Shipwright `Build` resource
-4. Optionally generates a `ServiceAccount` when pull secrets are referenced
+4. Generates a `ServiceAccount` named after the BuildConfig when a pull secret is referenced and the BuildConfig names no ServiceAccount; a named ServiceAccount is migrated by crane unchanged, and the plugin warns with the `oc secrets link` command that attaches the pull secret on the target
 
 All other resource types are passed through unchanged.
 
@@ -27,11 +27,37 @@ All other resource types are passed through unchanged.
 | Flag | Format | Purpose |
 |------|--------|---------|
 | `registry-mapping` | `old=new,old2=new2` | Rewrite image registry references |
-| `imagestream-mapping` | `ns/name:tag=registry/image:tag` | Resolve ImageStreamTag references to concrete image URLs |
+| `imagestream-mapping` | `ns/name:tag=registry/image:tag` | Resolve ImageStreamTag/ImageStreamImage references, and bare DockerImage names that relied on `lookupPolicy.local`, to concrete image URLs |
 | `default-build-strategy` | `docker=my-buildah,s2i=my-s2i` | Override default ClusterBuildStrategy names |
 | `search-registries` | `reg1,reg2` | Search registries for Buildah |
 | `insecure-registries` | `reg1,reg2` | Insecure (HTTP/self-signed) registries. Buildah gets the `registries-insecure` param; for a Shipwright-managed push (`source-to-image`) an output image on one of these registries sets `spec.output.insecure=true` |
 | `block-registries` | `reg1,reg2` | Blocked registries for Buildah |
+
+### Redirecting output images
+
+A BuildConfig pushes its output to the internal OpenShift registry
+(`image-registry.openshift-image-registry.svc:5000/<namespace>/<name>`). To send
+converted Builds to a registry the target cluster can reach, use the two mapping
+flags — there is no dedicated `--dest-registry` flag:
+
+- `registry-mapping` rewrites the registry prefix and **preserves the
+  `<namespace>/<name>` path**. Mapping the internal registry to `quay.io/acme`
+  turns an ImageStreamTag output in namespace `myapp` into
+  `quay.io/acme/myapp/webapp:latest` — three path segments.
+- Registries that accept only `<org>/<repo>` (Quay.io, Docker Hub) reject that
+  deeper path. For those, give an exact target per BuildConfig with
+  `imagestream-mapping` (`ns/name:tag=registry/image:tag`), which sets the output
+  reference. `registry-mapping` still runs afterward, so a prefix it matches on
+  the mapped value is rewritten too — keep that in mind when using both flags.
+
+Redirecting an ImageStreamTag output off the internal registry means the source
+ImageStream is no longer updated, so anything watching it to roll out (a
+Deployment or DeploymentConfig) stops firing. The converter warns when this
+happens. The check is a registry-prefix comparison, not a cluster-aware one: it
+fires when the resolved image no longer starts with
+`image-registry.openshift-image-registry.svc:5000/`. A redirect to a different
+in-cluster registry alias is not recognised as internal, and a redirect to a
+different path on the same internal registry is not caught.
 
 ## Prerequisites
 
@@ -87,7 +113,7 @@ transform/
   resources/
     BuildConfig_build.openshift.io_v1_myapp_myapp-build.yaml  # whiteout
     Build_shipwright.io_v1beta1_myapp_myapp-build.yaml         # new Shipwright Build
-    ServiceAccount_v1_myapp_myapp-build.yaml                   # if pull secrets used
+    ServiceAccount_v1_myapp_myapp-build.yaml                   # if a pull secret is used and no ServiceAccount is named
   ...
 ```
 
@@ -238,9 +264,9 @@ See [`hack/README.md`](hack/README.md) for detailed cluster setup instructions.
 
 ## Known limitations
 
-- **No live cluster access** — ImageStream references must be resolved via `--imagestream-mapping` or `--registry-mapping` flags. Without them, the plugin falls back to the internal OpenShift registry URL with a warning.
+- **No live cluster access** — ImageStream references must be resolved via `--imagestream-mapping` or `--registry-mapping` flags. Without them, the plugin falls back to the internal OpenShift registry URL with a warning. Bare image names such as `myapp:latest` that relied on ImageStream `lookupPolicy.local` are warned about and can be resolved with the same flag.
 - **Volumes** — BuildConfig volumes are not converted (Shipwright requires BuildStrategy-level support). A warning is emitted.
-- **Inline Dockerfiles** — Not supported for Docker strategy; must be in a separate file.
+- **Inline Dockerfiles** — the buildah strategy cannot consume Dockerfile content (BUILD-1495). The plugin preserves it in a ConfigMap named after the BuildConfig with a `-dockerfile` suffix and points at it from the Build annotation `buildconfig-to-shipwright/inline-dockerfile-configmap` (the annotation is the source of truth for the name); commit it to the repository before running the Build.
 - **Multiple source types** — Shipwright supports one source per Build. BuildConfigs with multiple sources produce an error.
 - **BuildRun not generated** — Only the Build definition is created. Triggering builds is left to the user or CI/CD system.
 
