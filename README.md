@@ -30,7 +30,7 @@ All other resource types are passed through unchanged.
 | `imagestream-mapping` | `ns/name:tag=registry/image:tag` | Resolve ImageStreamTag/ImageStreamImage references, and bare DockerImage names that relied on `lookupPolicy.local`, to concrete image URLs |
 | `default-build-strategy` | `docker=my-buildah,s2i=my-s2i` | Override default ClusterBuildStrategy names |
 | `search-registries` | `reg1,reg2` | Search registries for Buildah |
-| `insecure-registries` | `reg1,reg2` | Insecure registries for Buildah |
+| `insecure-registries` | `reg1,reg2` | Insecure (HTTP/self-signed) registries. Buildah gets the `registries-insecure` param; for a Shipwright-managed push (`source-to-image`) an output image on one of these registries sets `spec.output.insecure=true` |
 | `block-registries` | `reg1,reg2` | Blocked registries for Buildah |
 
 ### Redirecting output images
@@ -81,7 +81,7 @@ crane version
 ### 1. Export the namespace
 
 ```bash
-crane export -n myapp --export-dir ./migration
+crane export -n myapp
 ```
 
 This exports all resources including BuildConfigs, ImageStreams, etc.
@@ -89,9 +89,7 @@ This exports all resources including BuildConfigs, ImageStreams, etc.
 ### 2. Transform with plugins
 
 ```bash
-crane transform \
-  --export-dir ./migration \
-  --transform-dir ./migration/transform \
+crane transform BuildConfigPlugin \
   --plugin-dir ./plugins
 ```
 
@@ -100,10 +98,9 @@ The plugin directory should contain the `crane-plugin-buildconfig-to-shipwright`
 To pass plugin flags, use the `--optional-flags` parameter:
 
 ```bash
-crane transform \
-  --export-dir ./migration \
-  --transform-dir ./migration/transform \
+crane transform BuildConfigPlugin \
   --plugin-dir ./plugins \
+  --overwrite \
   --optional-flags "registry-mapping=image-registry.openshift-image-registry.svc:5000=quay.io/myorg,imagestream-mapping=myns/mybuilder:latest=quay.io/myorg/builder:latest"
 ```
 
@@ -112,7 +109,7 @@ crane transform \
 After transform, the output directory contains:
 
 ```
-migration/transform/
+transform/
   resources/
     BuildConfig_build.openshift.io_v1_myapp_myapp-build.yaml  # whiteout
     Build_shipwright.io_v1beta1_myapp_myapp-build.yaml         # new Shipwright Build
@@ -125,11 +122,9 @@ Review the generated Shipwright Build YAMLs before applying.
 ### 4. Apply to the target cluster
 
 ```bash
-crane apply \
-  --transform-dir ./migration/transform \
-  --output-dir ./migration/output
+crane apply
 
-kubectl apply -f ./migration/output/resources/
+kubectl apply -f ./output/resources/
 ```
 
 ### Full example
@@ -138,25 +133,21 @@ Migrating a namespace with a Dockerfile-based BuildConfig from OpenShift to a Sh
 
 ```bash
 # Export from source cluster
-crane export -n myapp --export-dir ./migration
+crane export -n myapp
 
 # Transform — OpenShift plugin strips OCP-specific resources,
 # BuildConfig plugin converts builds to Shipwright
-crane transform \
-  --export-dir ./migration \
-  --transform-dir ./migration/transform \
+crane transform BuildConfigPlugin \
   --plugin-dir ./plugins \
   --optional-flags "registry-mapping=image-registry.openshift-image-registry.svc:5000=quay.io/myorg"
 
 # Review generated Shipwright Builds
-cat ./migration/transform/resources/Build_shipwright.io_v1beta1_myapp_*.yaml
+cat ./transform/resources/Build_shipwright.io_v1beta1_myapp_*.yaml
 
 # Apply to target cluster (Shipwright + Tekton must be installed)
-crane apply \
-  --transform-dir ./migration/transform \
-  --output-dir ./migration/output
+crane apply
 
-kubectl apply -f ./migration/output/resources/
+kubectl apply -f ./output/resources/
 ```
 
 ## Conversion example
@@ -245,26 +236,31 @@ GOTOOLCHAIN=auto go test ./...
 ```
 
 ### 2. Plugin E2E Tests
-Tests the plugin binary in isolation (with crane), processing input YAML manifest files and asserting expected output manifests.
+Tests the plugin binary in isolation (with crane), running sample exported resources through the `crane transform` + `crane apply` pipeline and asserting the output manifests.
 
 ```bash
-# TBD, or WIP ./tests/e2e-transform.sh
+./tests/e2e-transform.sh
 ```
 
 These tests verify the transformation logic works correctly without requiring a live cluster.
 
 ### 3. Cluster E2E Tests
-Full end-to-end tests on real Kubernetes clusters, validating the entire workflow:
-- **Minikube** - with fake BuildConfig CRD (CRD only, no build functionality)
-- **OpenShift** - with full OpenShift Builds/Shipwright installation
-
-Tests the complete flow: export from cluster → transformation → import → verify Shipwright Builds are valid and functional (trigger actual builds with configured strategies).
+Full end-to-end validation on a live Minikube cluster with Tekton, Shipwright, and
+the fake BuildConfig CRD. It runs a case per source BuildConfig — an S2I build with
+ImageStream builder and output references, and a Docker (Dockerfile) build — through
+the standard `crane transform` + `crane apply` flow, verifies each generated
+Shipwright Build manifest, applies it to the cluster, and runs a BuildRun to confirm
+the image build succeeds.
 
 ```bash
-# TBD
+# Requires a cluster from ./hack/setup-minikube-shipwright.sh + ./hack/fake-minikube-buildconfig.sh
+./tests/e2e-cluster.sh
+
+# Verify the generated manifest only, skip the actual build
+./tests/e2e-cluster.sh --skip-build
 ```
 
-See [`hack/README.md`](hack/README.md) for detailed setup instructions.
+See [`hack/README.md`](hack/README.md) for detailed cluster setup instructions.
 
 ## Known limitations
 

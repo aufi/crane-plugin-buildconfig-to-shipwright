@@ -1146,10 +1146,26 @@ func (c *Converter) addRegistries(b *shipwrightv1beta1.Build) {
 		})
 	}
 	if len(c.Opts.InsecureRegistries) > 0 {
-		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
-			Name:   "registries-insecure",
-			Values: toSingleValues(c.Opts.InsecureRegistries),
-		})
+		// The two strategies push two different ways, so "this registry is
+		// insecure" is expressed two different ways. A strategy-managed push
+		// (buildah) reads the registries-insecure param off the Build. A
+		// Shipwright-managed push (source-to-image) has no such param and would
+		// be rejected with UndefinedParameter; it honors spec.output.insecure
+		// instead. Route the single --insecure-registries intent to whichever
+		// the converted strategy uses, keyed on the default strategy names the
+		// plugin emits. A custom strategy override keeps the buildah-style param,
+		// since we cannot know how it pushes.
+		if b.Spec.Strategy.Name == defaultS2IStrategy {
+			if slices.Contains(c.Opts.InsecureRegistries, imageRegistryHost(b.Spec.Output.Image)) {
+				insecure := true
+				b.Spec.Output.Insecure = &insecure
+			}
+		} else {
+			b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+				Name:   "registries-insecure",
+				Values: toSingleValues(c.Opts.InsecureRegistries),
+			})
+		}
 	}
 	if len(c.Opts.BlockRegistries) > 0 {
 		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{

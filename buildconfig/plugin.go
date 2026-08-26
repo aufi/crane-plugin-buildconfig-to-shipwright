@@ -53,7 +53,7 @@ func (p *BuildConfigTransformPlugin) Metadata() transform.PluginMetadata {
 			},
 			{
 				FlagName: InsecureRegistriesFlag,
-				Help:     "Comma-separated list of insecure registries for Buildah",
+				Help:     "Comma-separated list of insecure (HTTP/self-signed) registries. For a strategy-managed push (buildah) these become the registries-insecure param; for a Shipwright-managed push (source-to-image) an output image on one of these registries sets spec.output.insecure=true",
 				Example:  "my-registry.local:5000",
 			},
 			{
