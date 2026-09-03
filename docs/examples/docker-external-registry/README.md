@@ -63,8 +63,11 @@ The same text is in the `conversion-warnings` annotation and in the plugin log.
 
 ## What to do next
 
-1. Create the push secret in the target namespace. The Build references it by name and
-   the plugin does not migrate secrets:
+1. The Build references `quay-push` by name, so that Secret must exist in the target
+   namespace. The plugin leaves Secrets alone. `crane export` picks up the source
+   cluster's `quay-push` and `crane apply` creates it on the target, unless another
+   transform plugin you selected filters it out. If you applied only the Build from
+   `expected/`, create the Secret yourself:
 
    ```bash
    kubectl create secret docker-registry quay-push -n buildconfig-test \
