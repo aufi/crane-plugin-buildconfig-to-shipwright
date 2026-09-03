@@ -155,6 +155,9 @@ kubectl apply -f ./output/resources/
 
 ## Conversion example
 
+Worked examples with the exact input, flags, and output, each checked by a test on every
+CI run, are under [docs/examples](docs/examples/README.md).
+
 **Input — OpenShift BuildConfig:**
 
 ```yaml

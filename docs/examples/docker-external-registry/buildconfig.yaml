@@ -1,0 +1,31 @@
+# A Docker-strategy BuildConfig that builds a Ruby app from its own Dockerfile
+# and pushes the image to an ImageStream. After migration the image goes to an
+# external registry instead, through the registry-mapping flag.
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: ruby-hello-world-docker
+  namespace: buildconfig-test
+  labels:
+    app: ruby-hello-world
+    build-type: docker
+spec:
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  source:
+    type: Git
+    git:
+      uri: https://github.com/openshift/ruby-hello-world.git
+      ref: master
+  output:
+    to:
+      kind: ImageStreamTag
+      name: ruby-hello-world:latest
+    # The credential for the external registry. Create a Secret with this name
+    # in the target namespace before running the build.
+    pushSecret:
+      name: quay-push
+  triggers:
+    - type: ConfigChange
