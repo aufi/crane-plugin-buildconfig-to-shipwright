@@ -27,6 +27,9 @@ const (
 	NoCacheParamName          = "no-cache"
 	SquashParamName           = "squash"
 	ForcePullParamName        = "pull"
+	S2IScriptsURLParamName    = "scripts-url"
+	S2IIncrementalParamName   = "incremental"
+	S2IPullPolicyParamName    = "pull-policy"
 	RuntimeStageFromParamName = "runtime-stage-from"
 	BuildArgsParamName        = "build-args"
 
@@ -59,10 +62,7 @@ const (
 	SecretsRFE    = "https://issues.redhat.com/browse/BUILD-1744"
 	// VolumeMigrationDoc is the runbook for making converted Build volumes
 	// pass Shipwright validation (repo-relative; upstream URL not assumed).
-	VolumeMigrationDoc  = "docs/volume-migration.md in the crane-plugin-buildconfig-to-shipwright repository"
-	CustomScriptsRFE    = "https://issues.redhat.com/browse/BUILD-1641"
-	IncrementalBuildRFE = "https://issues.redhat.com/browse/BUILD-1607"
-	ForcePullFlagS2iRFE = "https://issues.redhat.com/browse/BUILD-1606"
+	VolumeMigrationDoc = "docs/volume-migration.md in the crane-plugin-buildconfig-to-shipwright repository"
 )
 
 // The per-BuildConfig conversion outcome model (OutcomeState, Outcome, the
@@ -588,15 +588,34 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 		b.Spec.Env = append(b.Spec.Env, ss.Env...)
 	}
 
-	// Warnings for unsupported features
+	// Scripts → scripts-url param
 	if ss.Scripts != "" {
-		c.warnf("Custom scripts are not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", CustomScriptsRFE)
+		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+			Name:        S2IScriptsURLParamName,
+			SingleValue: &shipwrightv1beta1.SingleValue{Value: &ss.Scripts},
+		})
 	}
+
+	// Incremental → incremental param. s2i generates a Dockerfile that starts
+	// with "FROM <output image> as cached", so the first BuildRun on a target
+	// that does not hold the output image yet fails at buildah. OpenShift's
+	// in-process builder tolerated the missing image; the strategy does not.
 	if ss.Incremental != nil && *ss.Incremental {
-		c.warnf("Incremental build is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", IncrementalBuildRFE)
+		incrementalValue := "true"
+		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+			Name:        S2IIncrementalParamName,
+			SingleValue: &shipwrightv1beta1.SingleValue{Value: &incrementalValue},
+		})
+		c.warnf("%s", "Incremental build enabled. The first BuildRun fails unless the output image already exists in the target registry, because s2i builds FROM it. Run the first BuildRun with paramValues incremental=false, or push the image once by hand.")
 	}
+
+	// ForcePull → pull-policy param
 	if ss.ForcePull {
-		c.warnf("ForcePull flag is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", ForcePullFlagS2iRFE)
+		pullPolicyValue := "always"
+		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+			Name:        S2IPullPolicyParamName,
+			SingleValue: &shipwrightv1beta1.SingleValue{Value: &pullPolicyValue},
+		})
 	}
 	// Volumes — converted to Build spec volumes under their original names.
 	// Shipwright rejects the Build (Registered=False, reason UndefinedVolume)
