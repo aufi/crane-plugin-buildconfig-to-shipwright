@@ -117,7 +117,7 @@ Either way the BuildConfig itself stays exactly as it was.
 | Field | What happens | Where it lands | What you do by hand | Warning |
 |---|---|---|---|---|
 | `sourceStrategy.scripts` | Converted. The value is copied as written; no mapping flag applies | `spec.paramValues[scripts-url]` | Check that an `http(s)` URL is reachable from the target's build pods, or that an `image://` path exists in the builder image the Build resolves to. s2i fails the run with `could not download any scripts from URL` otherwise. See [Strategy parameters](#strategy-parameters) | none |
-| `sourceStrategy.incremental: true` | Converted, with a warning. s2i builds `FROM <output image> as cached`, so the first BuildRun on a target that does not hold the output image yet fails at buildah | `spec.paramValues[incremental] = true` | Run the first BuildRun with `paramValues` `incremental=false`, or push the output image once by hand. See [Strategy parameters](#strategy-parameters) | W21 |
+| `sourceStrategy.incremental: true` | Converted, with a warning. s2i builds `FROM <output image> as cached`, so the first BuildRun on a target that does not hold the output image yet fails at buildah | `spec.paramValues[incremental] = true` | Run the first BuildRun with `paramValues` `incremental=false`, or push the output image once by hand. Restrict write access to the output tag on the target registry; see [Strategy parameters](#strategy-parameters) | W21 |
 | `sourceStrategy.forcePull: true` | Converted | `spec.paramValues[pull-policy] = always` | Nothing on the Build. See [Strategy parameters](#strategy-parameters) | none |
 | `sourceStrategy.from` | Converted. The reference is resolved through the mapping flags. An empty `kind` is treated as `ImageStreamTag` | `spec.paramValues[builder-image]` | See [Image references](#image-references) | W11 or W20 when it cannot be resolved |
 | `sourceStrategy.volumes[]` | Converted, with a warning | `spec.volumes[]` | See [Strategy volumes](#strategy-volumes) | W22 to W26 |
@@ -132,6 +132,14 @@ and Builds 1.8 do not, and a Build that carries one of these params lands on the
 `Registered=False`, reason `UndefinedParameter`. A strategy copy named through
 `--default-build-strategy` must declare them too. The plugin cannot see the target cluster,
 so it emits no warning for this; check the strategy before you apply.
+
+`incremental` also decides who can run code in the build. s2i builds `FROM <output image> as
+cached` and runs `save-artifacts` in a container from that image, as root, in a pod holding the
+BuildRun ServiceAccount's registry credentials. Push access to the output tag is therefore
+execution inside the build. That was true on OpenShift too, but migration can move the tag:
+`--registry-mapping` sends the output image to a registry whose write access may be wider than
+the internal one it replaces (W35 fires when it does). Restrict writes to the output tag on the
+target registry before you enable `incremental` there.
 
 ### Strategy volumes
 
