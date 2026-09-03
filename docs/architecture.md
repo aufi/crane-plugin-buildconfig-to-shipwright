@@ -70,8 +70,9 @@ flowchart TD
 
 `Convert` in `converter.go` builds one Shipwright Build from one BuildConfig. It walks the
 BuildConfig field group by field group in a fixed order. At each step it writes what
-Shipwright can express and records a warning for anything it drops. Three steps can end
-the conversion early. The rest only add to the Build or warn.
+Shipwright can express and records a warning for anything it drops. Seven steps can end
+the conversion: two by design, the strategy switch in step 2 and the output gate in step 3,
+and five more on an error. The rest only add to the Build or warn.
 
 | # | Step | Function | Reads | Writes | Can end the conversion |
 |---|---|---|---|---|---|
@@ -88,7 +89,7 @@ the conversion early. The rest only add to the Build or warn.
 | 11 | Run policy | `processRunPolicy` | `runPolicy` | nothing; warns for Serial, which is also what an absent `runPolicy` means, for SerialLatestOnly, and for any unrecognised value. Parallel is the only silent case | no |
 | 12 | Post-commit hook | `processPostCommit` in `postcommit.go` | `postCommit` | nothing; warns that the hook is dropped | no |
 | 13 | History limits | `processBuildsHistoryLimits` | the two history limits | `spec.retention`; values outside 1 to 10000 are dropped | no |
-| 14 | Registries | `addRegistries` | the three registry flags | strategy params for search, insecure and block lists. For source-to-image the insecure list sets `spec.output.insecure` instead, because Shipwright does the push there | no |
+| 14 | Registries | `addRegistries` | the three registry flags | strategy params for search, insecure and block lists. When the strategy name is exactly `source-to-image`, and only when the output image's registry is in the insecure list, the list sets `spec.output.insecure` instead, because Shipwright does the push there. An S2I override from `default-build-strategy` gets the `registries-insecure` param like buildah does, since the plugin cannot know how it pushes | no |
 | 15 | Triggers | `processTriggers` in `triggers.go` | `spec.triggers` | the original triggers as an annotation, secrets removed; one warning per trigger and one summary | no |
 | 16 | Resources | `processResources` | `spec.resources` | a BuildRun template with the requests and limits, stored as an annotation. Never a live BuildRun. Under a `default-build-strategy` override the template has no `stepResources`, and a warning asks the user to add them | template cannot be marshalled: failed |
 | 17 | Outcome | inline in `Convert` | the warnings recorded since step 1 | the `conversion-outcome` annotation, and the `conversion-warnings` annotation when any warning fired | no |
@@ -169,10 +170,13 @@ Every BuildConfig ends in exactly one of four states, defined in `outcome.go`.
 The only transition is `converted` to `converted-with-warnings`, made in step 17 when any
 warning was recorded. Skipped and failed are final the moment they are returned.
 
-Two size limits protect the output from being rejected by Kubernetes, which caps all
-annotations on an object at 256 KiB. `boundedWarnings` cuts the warnings annotation at
-32 KiB, keeps only whole warnings, and adds a line saying how many it left out.
-`truncateReason` cuts the reason annotation at 4 KiB. The log always has the full text.
+Kubernetes caps all annotations on an object at 256 KiB. The plugin bounds two of the
+annotations it writes. `boundedWarnings` cuts the warnings annotation at 32 KiB, keeps
+only whole warnings, and adds a line saying how many it left out. `truncateReason` cuts
+the reason annotation at 4 KiB. The log always has the full text. Nothing bounds the
+total: the copied user annotations, the original-triggers annotation and the BuildRun
+template are written whole, so a BuildConfig that is already near the cap can still
+produce a Build that Kubernetes rejects.
 
 ## What the plugin generates
 
@@ -252,7 +256,7 @@ reasoning. Those records do not exist yet; the numbers below are the planned one
 | 1 | Every dropped or degraded field is recorded through `warnf` (or `recordWarning` for the two ERROR-level drops). The one intended exception is `filterMetadata`, which drops OpenShift-managed labels and annotations at INFO. A direct `Log.Warn` for a drop is a review error | a warning that bypasses the list makes a lossy conversion look clean. This happened once, for every trigger type | `attribution_test.go` (`TestConvertSilentDropsAreRecorded`); the exception by `converter_test.go` (`TestConvertMetadataLabelsFiltersInternal`); otherwise convention and review. ADR-0003 |
 | 2 | The plugin never contacts a cluster. Image references resolve from flags or the documented fallback | the reason this plugin exists instead of the old `crane convert` | convention only. ADR-0001 |
 | 3 | One BuildConfig that cannot convert never aborts the crane run. `Run` returns no error for it; the object passes through annotated | crane aborts the whole migration on any plugin error | `outcome_test.go` (`TestRunDoesNotAbortOnConversionFailure`). ADR-0002 |
-| 4 | Steps 4 to 18 and their warnings run only on a BuildConfig that passed the three early exits (Custom, JenkinsPipeline, missing output). Step 2 still runs before the output gate; see the second ordering problem above | otherwise an unconverted BuildConfig gets false "field dropped" warnings | `postcommit_test.go` (`TestPostCommitSilentOnPassThroughPaths`) pins step 12; the rest is convention and review |
+| 4 | Steps 4 to 18 and their warnings run only on a BuildConfig that passed step 2, where Custom and JenkinsPipeline are skipped and an unknown strategy type or an unresolvable `from` image fails, and the output gate in step 3. Step 2 still runs before the gate; see the second ordering problem above | otherwise an unconverted BuildConfig gets false "field dropped" warnings | `postcommit_test.go` (`TestPostCommitSilentOnPassThroughPaths`) pins step 12; the rest is convention and review |
 | 5 | Strategy parameter names are a wire contract with the ClusterBuildStrategy. Renaming one without a matching catalog change drops the value on the cluster | Shipwright refuses to register a Build whose params it does not know | string assertions in `converter_test.go`; `tests/e2e-cluster.sh` checks `registered=True`. ADR-0004 |
 | 6 | Out-of-range or invalid values are warned about and dropped whole. Never clamped, never partly applied | clamping rewrites user intent silently | `converter_test.go` (retention), `nodeselector_test.go` |
 | 7 | Never emit a ServiceAccount with the same name as one the BuildConfig names | crane migrates that account separately; a same-named emit overwrites its pull secrets | `converter_test.go` (`TestNamedServiceAccountWithPullSecretIsNotGenerated`). ADR-0006 |
@@ -289,9 +293,10 @@ reasoning. Those records do not exist yet; the numbers below are the planned one
 
 Three tests in `buildconfig/architecture_doc_test.go`:
 
-- `TestArchitectureDocNamesEveryFileAndStage` fails if a non-test Go file, or a `process*`
-  method on `Converter`, is not named on this page as an exact backticked token. A new file
-  or step forces a line here.
+- `TestArchitectureDocNamesEveryFileAndStage` fails if a non-test Go file has no row in
+  the files table, or its row carries a review label other than the ones defined there, or
+  if a `process*` method on `Converter` is not named on this page as an exact backticked
+  token. A new file forces a labelled row; a new step forces a line.
 - `TestArchitectureDocSymbolsExist` fails if one of the other functions this page relies on,
   `Run`, `Convert`, `uniqueName`, `warnf` and the rest of the list in the test, is no longer
   declared in the package or no longer named here. A rename forces an edit here.
@@ -312,4 +317,3 @@ No test checks this table; it is kept by hand.
 | [#65](https://github.com/migtools/crane-plugin-buildconfig-to-shipwright/pull/65) | BUILD-2432 | Adds `docs/support-matrix.md`, a field-by-field list of what converts, warns or drops, and a test that keeps it in step with the warnings in the code. The introduction and the "A new warning" entry above point at it |
 | [#23](https://github.com/migtools/crane-plugin-buildconfig-to-shipwright/pull/23) | BUILD-2265 | Adds a step, `processMountTrustedCA`, that appends a `trusted-ca` volume and emits a third generated resource, a CA-bundle ConfigMap. Adds four constants for it. The branch predates the outcome model and records its warnings with `Log.Warnf` instead of `warnf`, so it needs a rebase and a port to rule 1 before it lands |
 | [#63](https://github.com/migtools/crane-plugin-buildconfig-to-shipwright/pull/63) | | Adds a Go E2E framework under `tests/e2e` and `tests/framework`, driven by `tests/rules.yaml` and YAML fixtures. Those files need a review label in [The files](#the-files) |
-| [#62](https://github.com/migtools/crane-plugin-buildconfig-to-shipwright/pull/62) | | Downgrades the Go toolchain to 1.25. No effect on this page beyond the build instructions in the README |

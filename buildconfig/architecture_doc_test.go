@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,11 @@ var docSymbols = []string{
 	"toUnstructured", "stripSerializationNoise",
 }
 
+// reviewLabels are the values the Review column of the files table may hold:
+// the two labels the section defines, and "see below" for converter.go, which
+// the prose under the table splits by function.
+var reviewLabels = []string{"read every changed line", "trust the tests", "see below"}
+
 var (
 	backtickedToken = regexp.MustCompile("`([^`\n]+)`")
 	citedTestFunc   = regexp.MustCompile("`(Test\\w+)`")
@@ -33,30 +39,38 @@ var (
 )
 
 // TestArchitectureDocNamesEveryFileAndStage fails when a non-test Go file in
-// this package (or main.go), or a process* method on Converter, is not named
-// in docs/architecture.md as an exact backticked token. A new file or
-// pipeline step forces a line in the doc. It checks that names appear, not
-// that what the doc says about them is right.
+// this package (or main.go) has no row in the files table of
+// docs/architecture.md, or its row carries a review label other than the
+// ones in reviewLabels, or when a process* method on Converter is not named
+// on the page as an exact backticked token. A new file forces a labelled row;
+// a new pipeline step forces a line. It checks that names and labels appear,
+// not that what the doc says about them is right.
 func TestArchitectureDocNamesEveryFileAndStage(t *testing.T) {
-	tokens := backtickedTokens(readArchitectureDoc(t))
+	doc := readArchitectureDoc(t)
+	labels := filesTableReviewLabels(t, doc)
 
-	if !tokens["main.go"] {
-		t.Errorf("%s does not name main.go; add it to the files table", architectureDocPath)
-	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob *.go: %v", err)
 	}
+	want := []string{"main.go"}
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
+		if !strings.HasSuffix(f, "_test.go") {
+			want = append(want, "buildconfig/"+filepath.Base(f))
+		}
+	}
+	for _, name := range want {
+		label, ok := labels[name]
+		if !ok {
+			t.Errorf("%s has no row for %s in the files table", architectureDocPath, name)
 			continue
 		}
-		name := filepath.Base(f)
-		if !tokens[name] && !tokens["buildconfig/"+name] {
-			t.Errorf("%s does not name %s; add it to the files table", architectureDocPath, name)
+		if !slices.Contains(reviewLabels, label) {
+			t.Errorf("%s gives %s the review label %q; use one of %q", architectureDocPath, name, label, reviewLabels)
 		}
 	}
 
+	tokens := backtickedTokens(doc)
 	for _, method := range packageDeclarations(t).processMethods {
 		if !tokens[method] {
 			t.Errorf("%s does not name %s; add it to the steps table", architectureDocPath, method)
@@ -211,6 +225,24 @@ func definedTestFuncs(t *testing.T) map[string]bool {
 	return defined
 }
 
+// filesTableReviewLabels returns the review label of every file row in the
+// "The files" table, keyed by the file name without its backticks. A row
+// counts as a file row when its first cell is a backticked token.
+func filesTableReviewLabels(t *testing.T, doc string) map[string]string {
+	t.Helper()
+	labels := map[string]string{}
+	for _, cells := range tableRows(t, doc, "## The files") {
+		if len(cells) < 3 || !strings.HasPrefix(cells[0], "`") {
+			continue
+		}
+		labels[strings.Trim(cells[0], "`")] = cells[len(cells)-1]
+	}
+	if len(labels) == 0 {
+		t.Fatalf("%s has no file rows in the files table", architectureDocPath)
+	}
+	return labels
+}
+
 type ruleRow struct {
 	number string
 	cells  []string
@@ -220,7 +252,24 @@ type ruleRow struct {
 // table, each split into its trimmed cells.
 func rulesTableRows(t *testing.T, doc string) []ruleRow {
 	t.Helper()
-	const heading = "## Rules that must stay true"
+	var rows []ruleRow
+	for _, cells := range tableRows(t, doc, "## Rules that must stay true") {
+		if len(cells) < 2 || strings.Trim(cells[0], "0123456789") != "" {
+			continue
+		}
+		rows = append(rows, ruleRow{number: cells[0], cells: cells})
+	}
+	if len(rows) == 0 {
+		t.Fatalf("%s has no numbered rows in the rules table", architectureDocPath)
+	}
+	return rows
+}
+
+// tableRows returns every pipe-delimited row between heading and the next
+// "## " heading, split into trimmed cells. Header and separator rows are
+// included; callers filter on the first cell.
+func tableRows(t *testing.T, doc, heading string) [][]string {
+	t.Helper()
 	start := strings.Index(doc, heading)
 	if start < 0 {
 		t.Fatalf("%s has no %q section", architectureDocPath, heading)
@@ -230,7 +279,7 @@ func rulesTableRows(t *testing.T, doc string) []ruleRow {
 		section = section[:end]
 	}
 
-	var rows []ruleRow
+	var rows [][]string
 	for _, line := range strings.Split(section, "\n") {
 		if !strings.HasPrefix(line, "|") {
 			continue
@@ -239,13 +288,7 @@ func rulesTableRows(t *testing.T, doc string) []ruleRow {
 		for i := range cells {
 			cells[i] = strings.TrimSpace(cells[i])
 		}
-		if len(cells) < 2 || strings.Trim(cells[0], "0123456789") != "" {
-			continue
-		}
-		rows = append(rows, ruleRow{number: cells[0], cells: cells})
-	}
-	if len(rows) == 0 {
-		t.Fatalf("%s has no numbered rows in the rules table", architectureDocPath)
+		rows = append(rows, cells)
 	}
 	return rows
 }
