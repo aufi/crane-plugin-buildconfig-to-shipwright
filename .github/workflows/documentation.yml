@@ -26,6 +26,4 @@ jobs:
         env:
           GOPROXY: "https://proxy.golang.org"
           GOWORK: off
-        run: >-
-          go test -v -tags documentation ./buildconfig
-          -run '^(TestArchitectureDocNamesEveryFileAndStage|TestArchitectureDocSymbolsExist|TestInvariantsCiteRealTests|TestSupportMatrixCoversEveryWarning|TestReadmeOptionalFlagsAreValidJSON|TestReadmeVersionsMatchPins|TestExamplesMatchCommittedOutput|TestADRsAreWellFormed|TestNoDirectWarnLoggingInConverter|TestDirectWarnCallsCatchEveryShape)$'
+        run: go test -v -tags documentation ./buildconfig

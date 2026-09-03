@@ -189,14 +189,11 @@ git ls-files '*.md' \
   | grep -vE '^(designs/|\.claude/|CLAUDE\.md$|README\.md$|AGENTS\.md$|hack/README\.md$|docs/volume-migration\.md$|docs/support-matrix\.md$|docs/architecture\.md$|docs/examples/.*\.md$|docs/adr/.*\.md$)' \
   | sed 's/^/UNMAPPED /' >> "$SCRATCH/docs.txt"
 cat "$SCRATCH/docs.txt"
-grep -lE '^func Test(SupportMatrix|ArchitectureDoc|Invariants|Examples|Readme|ADRs|NoDirectWarn|DirectWarn)' \
-  buildconfig/*_test.go 2>&1 | tee "$SCRATCH/keeper-tests.txt"
 git status --porcelain -- '*.md' > "$SCRATCH/md-before.txt"   # Stage 7 compares against this
 ```
 
-A missing keeper test is not an error. It means the base predates the docs PRs, and Stage 2
-is `SKIPPED (none on this base)`. An `UNMAPPED` doc joins the grep in Stage 3a and gets a
-`MEMORY.md` entry keyed `unmapped-doc:<path>` in Stage 7b.
+An `UNMAPPED` doc joins the grep in Stage 3a and gets a `MEMORY.md` entry keyed
+`unmapped-doc:<path>` in Stage 7b.
 
 ### 0d. Docs-only guard
 
@@ -294,14 +291,13 @@ The documentation tests are the oracle for the rows they guard. Run them before 
 any doc, so the proposals start from what CI would say:
 
 ```bash
-KEEPERS='TestSupportMatrix|TestArchitectureDoc|TestInvariants|TestExamples|TestReadme|TestADRs|TestNoDirectWarn|TestDirectWarn'
-cd "$WORK" && GOWORK=off go test ./buildconfig -run "$KEEPERS" -count=1 2>&1 \
+cd "$WORK" && GOWORK=off go test -tags documentation ./buildconfig -count=1 2>&1 \
   | grep -E 'FAIL|^ok|^---|\.go:[0-9]+:|^[[:space:]]{8,}|^#' | tee "$SCRATCH/keeper.txt"
 ```
 
 The filter keeps the verdict lines, the failure lines (`file_test.go:47: ...` and their
-indented continuations), compile errors, and `ok ... [no tests to run]`; it drops the
-`=== RUN` and `--- PASS` noise that made this stage the most expensive read in the run.
+indented continuations), and compile errors; it drops the `=== RUN` and `--- PASS` noise
+that made this stage the most expensive read in the run.
 
 Each failure names a doc and, usually, the row: "warning has no row in
 docs/support-matrix.md", "does not name main.go", "quotes W12, which no longer matches".
@@ -309,10 +305,6 @@ Carry every one into Stage 4 as a proposal with verdict `keeper-test`. A keeper 
 failure output, read as a whole, does **not** name the row is a `MEMORY.md` entry keyed
 `keeper-silent:<test>`; a test that prints the unrowed text on one line and the row id on
 the next has named it.
-
-`no tests to run` with an empty `keeper-tests.txt` means the base predates the docs PRs.
-Record `SKIPPED (none on this base)` and continue: the map still applies, CI just will not
-enforce it yet.
 
 `GOWORK=off` is what CI runs. The workspace `go.work` outside this repo resolves
 dependencies differently and can hide or invent a failure.
@@ -537,7 +529,7 @@ For each approved block, make the edit in `$WORK` and append its path to
    if grep -qE '\.go$|docs/examples/.*/expected/' "$SCRATCH/edited.txt"; then
      GOWORK=off go test ./... -count=1 2>&1
    else
-     GOWORK=off go test ./buildconfig -run "$KEEPERS" -count=1 2>&1
+      GOWORK=off go test -tags documentation ./buildconfig -count=1 2>&1
    fi | grep -E 'FAIL|^ok|^---|\.go:[0-9]+:|^[[:space:]]{8,}|^#' | tee "$SCRATCH/verify.txt"
    ```
 
