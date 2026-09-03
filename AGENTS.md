@@ -2,7 +2,7 @@
 
 ## What is this
 
-A [crane](https://github.com/konveyor/crane) transform plugin that converts OpenShift `BuildConfig` resources (`build.openshift.io/v1`) to Shipwright `Build` CRs (`shipwright.io/v1beta1`). It runs as a standalone binary communicating over stdin/stdout JSON, following the crane plugin protocol.
+A [crane](https://github.com/migtools/crane) transform plugin that converts OpenShift `BuildConfig` resources (`build.openshift.io/v1`) to Shipwright `Build` CRs (`shipwright.io/v1beta1`). It runs as a standalone binary communicating over stdin/stdout JSON, following the crane plugin protocol.
 
 ## Enhancement proposal
 
@@ -19,8 +19,11 @@ https://github.com/konveyor/enhancements/pull/300
 The plugin fits into crane's multi-stage transform pipeline. For each resource in the export:
 
 1. If the resource is not a `BuildConfig` (apiGroup `build.openshift.io`), it is passed through unchanged.
-2. If it is a BuildConfig, the plugin returns `IsWhiteOut: true` (marks the original for deletion) and generates a new Shipwright `Build` resource via `NewResources`.
-3. Docker strategy maps to `buildah` ClusterBuildStrategy, Source (S2I) strategy maps to `source-to-image`.
+2. If it is a BuildConfig with a Docker or Source strategy and an output image, the plugin returns `IsWhiteOut: true` (marks the original for deletion) and generates a new Shipwright `Build` resource via `NewResources`, plus a `ServiceAccount` or `ConfigMap` when needed.
+3. A BuildConfig with a Custom or JenkinsPipeline strategy, no output image, or one the plugin cannot convert passes through unchanged with two annotations saying it was skipped or failed, and why. The migration continues.
+4. Docker strategy maps to `buildah` ClusterBuildStrategy, Source (S2I) strategy maps to `source-to-image`.
+
+The full picture, step by step, is in [`docs/architecture.md`](docs/architecture.md). What happens to every BuildConfig field is in [`docs/support-matrix.md`](docs/support-matrix.md).
 
 ## ImageStream resolution
 
@@ -75,6 +78,90 @@ Full end-to-end validation on real Minikube clusters. See [`hack/README.md`](hac
 **CI/CD:**
 
 Pull requests run automated E2E tests on Minikube via [`.github/workflows/test-e2e-minikube-pr.yml`](.github/workflows/test-e2e-minikube-pr.yml).
+
+## Before you change behaviour
+
+Read, in this order: the record in [`docs/adr/`](docs/adr/README.md) for the area you are
+touching; the rules table in [`docs/architecture.md`](docs/architecture.md); that step's row
+in the same page; and the rows in [`docs/support-matrix.md`](docs/support-matrix.md) for the
+field. Quote code by running grep or sed, never from memory.
+
+## After you change behaviour
+
+Update the support-matrix row if a warning changed (the matrix test tells you which), the
+steps table in the architecture page if the pipeline order changed, and add a record under
+`docs/adr/` if you decided a new rule. There is no changelog.
+
+## Files you may own fully
+
+`main.go`, `tests/testdata/export/*`, `buildconfig/names.go`, `buildconfig/postcommit.go`,
+and `processRunPolicy`, the one conversion step that writes nothing to the Build. Propose
+and ship; the maintainer reads the result, not the diff.
+
+Nothing else. In particular this list does not cover `hack/*` or `buildconfig/*_test.go`,
+because CI executes both: `.github/workflows/test-e2e-minikube-pr.yml` runs the `hack/`
+setup scripts, and `.github/workflows/go.yml` runs `go test ./...`, which compiles every
+test file. Code that runs on the CI runner is read line by line.
+
+## Files where the maintainer reads your diff line by line
+
+**Everything not named in the list above.** That is the default, so a file in neither list
+is read line by line rather than left undecided. The ones worth calling out:
+
+`plugin.go`, `disposition.go`, `outcome.go`, `imagestream.go`, `triggers.go`,
+`dockerfile.go`, and all of `converter.go`, including the strategy switch and both
+handlers, the output gate, `processOutput`, `processSource`, `uniqueName`, the outcome
+block, serialization, and every remaining `process*` step. Five of those steps write to
+the generated Build and two of the five decide identity or mount Secrets, so none of them
+are low-stakes: `processStrategyVolumes` (writes `b.Spec.Volumes`, and
+`convertBuildVolumeSource` sets `volumeSource.Secret`), `processResources` (writes the
+BuildRun-template annotation, including `spec.serviceAccount`), `processCompletionDeadline`
+(`b.Spec.Timeout`), `processNodeSelector` (`b.Spec.NodeSelector`),
+`processBuildsHistoryLimits` (`b.Spec.Retention`), `processGitProxyConfig` (copies proxy
+URLs, which can embed credentials, into `Build.spec.env`) and `processOutputImageLabels`.
+
+Also `hack/*`, `buildconfig/*_test.go`, `tests/e2e-*.sh`, the golden files under
+`tests/testdata/e2e-*/`, `.github/workflows/*`, `go.mod` and `go.sum`, this file, and
+`.claude/skills/**`. The last two decide what an agent is allowed to do and what a review
+looks for, so widening your own grant is never a change you land unreviewed. Where the two
+lists could both match a path, the line-by-line list wins.
+
+On all of these: explain your reasoning before merge, name the rule you relied on, and do
+not reword a warning without saying which matrix row moves.
+
+## When a documentation test fails
+
+These tests guard the docs. A red one means a doc to update, not a test to weaken.
+
+Six of the eight land with the sibling documentation PRs (#64, #65, #66 to #68, #70) and do
+not exist on `main` yet. They are listed here so the table is complete when those merge.
+
+| Test | Guards | Fix |
+|---|---|---|
+| `TestSupportMatrixCoversEveryWarning` | every warning template has a row in the matrix, and every quoted warning still exists | add or reword the row in `docs/support-matrix.md` |
+| `TestArchitectureDocNamesEveryFileAndStage` | every non-test Go file and every `process*` method is named in the architecture page | add the line |
+| `TestInvariantsCiteRealTests` | every test the architecture page cites exists | rename it in the page, or restore the test |
+| `TestExamplesMatchCommittedOutput` | each `docs/examples/*/expected/` matches the plugin's output | `go test ./buildconfig -run TestExamplesMatchCommittedOutput -update` (once #66 to #68 land; the flag does not exist before that), then re-read that example's README. A regenerated expectation is a changed assertion, so it is read line by line like any other golden file |
+| `TestReadmeOptionalFlagsAreValidJSON`, `TestReadmeVersionsMatchPins` | README flag examples are JSON; README versions match `go.mod`, the Minikube script, and the CI crane pin | fix the README |
+| `TestADRsAreWellFormed` | every record has its parts and is in the index | fix the record |
+| `TestNoDirectWarnLoggingInConverter` | no `c.Log.Warn*` in a Converter method other than `warnf`, which is the single recording path | record the drop through `c.warnf` (ADR-0003) |
+
+## Gotchas
+
+- The released crane (v0.0.5) silently produces no Builds with this plugin. Build crane from
+  the commit `.github/workflows/test-e2e-minikube-pr.yml` pins, and put it first on `PATH`
+  before running `tests/e2e-transform.sh`.
+- Run the Go suite as CI does: `GOWORK=off go test ./... -count=1`. The workspace `go.work`
+  outside this repo can resolve different dependency versions.
+- On OpenShift, `kubectl get build/<name>` is the OpenShift Build API. Write
+  `build.shipwright.io/<name>`.
+- A BuildRun with `serviceAccount` unset runs as the namespace `pipeline` account. That is
+  right only when the plugin generated no ServiceAccount. When it did, the generated account
+  carries the BuildConfig's pull secret and the plugin names it in the
+  `buildconfig-to-shipwright/buildrun-template` annotation, so point the BuildRun at it or
+  the builder image will not pull. Grant it the SCC scoped to that one account,
+  `oc adm policy add-scc-to-user pipelines-scc -z <generated-sa> -n <namespace>`. Never bind
+  it with `-g system:serviceaccounts` or to the namespace default account.
 
 ## Commit policy
 
