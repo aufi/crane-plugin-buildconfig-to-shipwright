@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Fetch every review thread, review and comment on a PR and shape them into triage items.
+# Adapted from compound-engineering ce-resolve-pr-feedback/scripts/get-pr-comments (MIT, see ../NOTICE).
+#
+# usage: get-pr-feedback PR_NUMBER [OWNER/REPO]
+# Output: JSON {pr, items, skipped} on stdout (see scripts/shape-feedback.jq).
+#
+# Each connection is paginated in its own query: `gh api graphql --paginate` follows only the
+# outermost pageInfo, so one combined query would silently drop everything after page 1.
+set -euo pipefail
+
+usage() { echo "usage: get-pr-feedback PR_NUMBER [OWNER/REPO]" >&2; exit 1; }
+[ $# -ge 1 ] || usage
+PR=$1
+[[ "$PR" =~ ^[0-9]+$ ]] || usage
+
+if [ -n "${2:-}" ]; then
+  SLUG=$2
+else
+  SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+)/([^/]+)$#\1/\2#; s#\.git$##' || true)
+fi
+[[ "$SLUG" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "error: cannot resolve OWNER/REPO (got '$SLUG'); pass it as the second argument" >&2; exit 1; }
+OWNER=${SLUG%%/*}
+REPO=${SLUG##*/}
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+gh api graphql --paginate --slurp -f owner="$OWNER" -f repo="$REPO" -F pr="$PR" -f query='
+query Threads($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      number state title url headRefOid headRefName
+      author { login }
+      headRepositoryOwner { login }
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes {
+          id isResolved isOutdated path line originalLine startLine originalStartLine
+          comments(first: 100) { nodes { id author { login } body createdAt url } }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}' > "$TMP/threads.json"
+
+gh api graphql --paginate --slurp -f owner="$OWNER" -f repo="$REPO" -F pr="$PR" -f query='
+query Comments($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      comments(first: 100, after: $endCursor) {
+        nodes { id author { login } body createdAt url }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}' > "$TMP/comments.json"
+
+gh api graphql --paginate --slurp -f owner="$OWNER" -f repo="$REPO" -F pr="$PR" -f query='
+query Reviews($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviews(first: 100, after: $endCursor) {
+        nodes { id author { login } body state submittedAt url }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}' > "$TMP/reviews.json"
+
+jq -n --slurpfile t "$TMP/threads.json" --slurpfile c "$TMP/comments.json" --slurpfile r "$TMP/reviews.json" \
+  '{threads: $t[0], comments: $c[0], reviews: $r[0]}' \
+  | jq -f "$HERE/shape-feedback.jq"

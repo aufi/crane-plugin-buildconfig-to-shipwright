@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Mark a PR review thread as resolved.
+# Adapted from compound-engineering ce-resolve-pr-feedback (MIT, see ../NOTICE).
+#
+# usage: resolve-thread THREAD_ID
+set -euo pipefail
+
+usage() { echo "usage: resolve-thread THREAD_ID" >&2; exit 1; }
+[ $# -eq 1 ] || usage
+THREAD_ID=$1
+
+gh api graphql -f threadId="$THREAD_ID" -f query='
+mutation Resolve($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread { id isResolved path line }
+  }
+}' --jq '.data.resolveReviewThread'
