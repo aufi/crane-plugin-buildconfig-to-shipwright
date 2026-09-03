@@ -42,7 +42,7 @@ The "What happens" column uses these words:
   you can check for them yourself.
 - **Skipped** and **Failed.** The whole BuildConfig is not converted. See the next section.
 
-Warnings are quoted in the [Warning reference](#warning-reference) at the end, keyed W1 to W62.
+Warnings are quoted in the [Warning reference](#warning-reference) at the end, keyed W1 to W60.
 In the quotes, `…` marks a value the plugin fills in, such as a BuildConfig name.
 
 ## What stops a BuildConfig from converting
@@ -101,7 +101,7 @@ Either way the BuildConfig itself stays exactly as it was.
 | `dockerStrategy.buildArgs[].valueFrom` of any other shape | Dropped | | Set the value directly in the Build | W19 |
 | `dockerStrategy.buildArgs[]` with both `value` and `valueFrom` | Converted, with a warning. `valueFrom` wins | `spec.paramValues[build-args]` | Nothing, unless you meant the literal | W13 |
 | `dockerStrategy.from` | Converted. The reference is resolved through the mapping flags | `spec.paramValues[runtime-stage-from]` | See [Image references](#image-references) | W11 or W20 when it cannot be resolved |
-| `dockerStrategy.volumes[]` | Converted, with a warning | `spec.volumes[]` | See [Strategy volumes](#strategy-volumes) | W24 to W28 |
+| `dockerStrategy.volumes[]` | Converted, with a warning | `spec.volumes[]` | See [Strategy volumes](#strategy-volumes) | W22 to W26 |
 | `dockerStrategy.buildArgs[]` with a literal `value` | Converted | `spec.paramValues[build-args]` as `NAME=VALUE` | Nothing | none |
 | `dockerStrategy.buildArgs[].valueFrom.configMapKeyRef` | Converted | `spec.paramValues[build-args]` as a ConfigMap value reference, resolved at BuildRun time | Migrate the ConfigMap | none |
 | `dockerStrategy.buildArgs[].valueFrom.secretKeyRef` | Converted | `spec.paramValues[build-args]` as a Secret value reference | Migrate the Secret | none |
@@ -116,12 +116,22 @@ Either way the BuildConfig itself stays exactly as it was.
 
 | Field | What happens | Where it lands | What you do by hand | Warning |
 |---|---|---|---|---|
-| `sourceStrategy.scripts` | Dropped | | Bake the scripts into the builder image, or wait for the linked RFE | W21 |
-| `sourceStrategy.incremental: true` | Dropped | | Builds start from scratch. Wait for the linked RFE | W22 |
-| `sourceStrategy.forcePull: true` | Dropped | | Wait for the linked RFE | W23 |
+| `sourceStrategy.scripts` | Converted. The value is copied as written; no mapping flag applies | `spec.paramValues[scripts-url]` | Check that an `http(s)` URL is reachable from the target's build pods, or that an `image://` path exists in the builder image the Build resolves to. s2i fails the run with `could not download any scripts from URL` otherwise. See [Strategy parameters](#strategy-parameters) | none |
+| `sourceStrategy.incremental: true` | Converted, with a warning. s2i builds `FROM <output image> as cached`, so the first BuildRun on a target that does not hold the output image yet fails at buildah | `spec.paramValues[incremental] = true` | Run the first BuildRun with `paramValues` `incremental=false`, or push the output image once by hand. See [Strategy parameters](#strategy-parameters) | W21 |
+| `sourceStrategy.forcePull: true` | Converted | `spec.paramValues[pull-policy] = always` | Nothing on the Build. See [Strategy parameters](#strategy-parameters) | none |
 | `sourceStrategy.from` | Converted. The reference is resolved through the mapping flags. An empty `kind` is treated as `ImageStreamTag` | `spec.paramValues[builder-image]` | See [Image references](#image-references) | W11 or W20 when it cannot be resolved |
-| `sourceStrategy.volumes[]` | Converted, with a warning | `spec.volumes[]` | See [Strategy volumes](#strategy-volumes) | W24 to W28 |
+| `sourceStrategy.volumes[]` | Converted, with a warning | `spec.volumes[]` | See [Strategy volumes](#strategy-volumes) | W22 to W26 |
 | `sourceStrategy.env[]` | Converted | `spec.env[]` | Nothing | none |
+
+### Strategy parameters
+
+The three S2I params above, `scripts-url`, `incremental` and `pull-policy`, exist only on a
+`source-to-image` strategy that declares them. Builds for Red Hat OpenShift 1.9 (operator
+commit 150298a3) and strategy-catalog cb2432c do. The upstream Shipwright sample strategy
+and Builds 1.8 do not, and a Build that carries one of these params lands on them with
+`Registered=False`, reason `UndefinedParameter`. A strategy copy named through
+`--default-build-strategy` must declare them too. The plugin cannot see the target cluster,
+so it emits no warning for this; check the strategy before you apply.
 
 ### Strategy volumes
 
@@ -129,30 +139,30 @@ Applies to `dockerStrategy.volumes[]` and `sourceStrategy.volumes[]`.
 
 | Field | What happens | Where it lands | What you do by hand | Warning |
 |---|---|---|---|---|
-| a volume with an empty `name` | Dropped | | Name it | W24 |
-| a second volume with the same `name` | Dropped | | Remove the duplicate | W25 |
-| a volume whose `source.type` is not `Secret` or `ConfigMap`, that is `CSI` | Dropped | | The plugin maps only Secret and ConfigMap sources. Shipwright itself takes any pod volume source on `spec.volumes[]`, so add the volume by hand as the next row describes, with a `csi` source on the Build | W26 |
-| a `Secret` or `ConfigMap` volume | Converted, with a warning. The Build will not register (`Registered=False`, reason `UndefinedVolume`) until the strategy declares the volume | `spec.volumes[]`, under the same name | Copy the ClusterBuildStrategy, add an overridable volume with that name and a mount at the original path, and point the Build at the copy. See `docs/volume-migration.md` | W27 per volume, W28 once |
-| `volumes[].mounts[].destinationPath` | Carried into the warning only. Shipwright takes mount paths from the strategy, not the Build | | Use the path when you edit the strategy copy | in W27 |
+| a volume with an empty `name` | Dropped | | Name it | W22 |
+| a second volume with the same `name` | Dropped | | Remove the duplicate | W23 |
+| a volume whose `source.type` is not `Secret` or `ConfigMap`, that is `CSI` | Dropped | | The plugin maps only Secret and ConfigMap sources. Shipwright itself takes any pod volume source on `spec.volumes[]`, so add the volume by hand as the next row describes, with a `csi` source on the Build | W24 |
+| a `Secret` or `ConfigMap` volume | Converted, with a warning. The Build will not register (`Registered=False`, reason `UndefinedVolume`) until the strategy declares the volume | `spec.volumes[]`, under the same name | Copy the ClusterBuildStrategy, add an overridable volume with that name and a mount at the original path, and point the Build at the copy. See `docs/volume-migration.md` | W25 per volume, W26 once |
+| `volumes[].mounts[].destinationPath` | Carried into the warning only. Shipwright takes mount paths from the strategy, not the Build | | Use the path when you edit the strategy copy | in W25 |
 
 ### Source
 
 | Field | What happens | Where it lands | What you do by hand | Warning |
 |---|---|---|---|---|
-| `source.dockerfile` (inline Dockerfile) with a Docker strategy | Converted, with a warning. The content is saved in a ConfigMap, but the Build cannot build from it yet | a `ConfigMap` named `<buildconfig>-dockerfile` with key `Dockerfile`, and the annotation `buildconfig-to-shipwright/inline-dockerfile-configmap` on the Build | Commit the Dockerfile to the source repository before running the Build | W59 (logged at ERROR) |
-| `source.dockerfile` with a Source strategy | Dropped | | Nothing, unless you meant a Docker strategy | W60 |
-| `source.configMaps[]` | Dropped | | Add an overridable volume to the strategy, a volume override on the Build, and change `ADD`/`COPY` to `RUN cp` in the Dockerfile | W34 per entry |
-| `source.secrets[]` | Dropped | | Same as above | W35 per entry |
-| `source.sourceSecret` when `source.git` is not set | Dropped | | Nothing. It did nothing on OpenShift either | W29 |
-| no `git`, `binary` or `images` at all | Converted, with a warning. The Build has no `spec.source` | | Add a source, or delete the Build | W30. `contextDir`, `configMaps` and `secrets` are then dropped silently |
-| `source.images[].as` | Dropped | | No equivalent | W31 |
-| `source.images[].paths` | Dropped. The whole image becomes the source | | Adjust the Dockerfile to the image's layout | W32 |
+| `source.dockerfile` (inline Dockerfile) with a Docker strategy | Converted, with a warning. The content is saved in a ConfigMap, but the Build cannot build from it yet | a `ConfigMap` named `<buildconfig>-dockerfile` with key `Dockerfile`, and the annotation `buildconfig-to-shipwright/inline-dockerfile-configmap` on the Build | Commit the Dockerfile to the source repository before running the Build | W57 (logged at ERROR) |
+| `source.dockerfile` with a Source strategy | Dropped | | Nothing, unless you meant a Docker strategy | W58 |
+| `source.configMaps[]` | Dropped | | Add an overridable volume to the strategy, a volume override on the Build, and change `ADD`/`COPY` to `RUN cp` in the Dockerfile | W32 per entry |
+| `source.secrets[]` | Dropped | | Same as above | W33 per entry |
+| `source.sourceSecret` when `source.git` is not set | Dropped | | Nothing. It did nothing on OpenShift either | W27 |
+| no `git`, `binary` or `images` at all | Converted, with a warning. The Build has no `spec.source` | | Add a source, or delete the Build | W28. `contextDir`, `configMaps` and `secrets` are then dropped silently |
+| `source.images[].as` | Dropped | | No equivalent | W29 |
+| `source.images[].paths` | Dropped. The whole image becomes the source | | Adjust the Dockerfile to the image's layout | W30 |
 | `source.binary.asFile` | Converted, with a change. The file name is not carried | `spec.source: {type: Local, local: {name: local-copy, timeout: 10m}}` | Upload the file with `shp build upload` or an equivalent when you run the build | none |
 | `source.git.uri`, `source.git.ref` | Converted | `spec.source.git.url`, `spec.source.git.revision` | Nothing | none |
 | `source.sourceSecret` with `source.git` | Converted | `spec.source.git.cloneSecret` | Migrate the secret | none |
 | `source.git.httpProxy`, `httpsProxy`, `noProxy` | Converted | `spec.env[]` as `HTTP_PROXY` and `http_proxy`, and likewise for the other two | Nothing | none |
 | `source.contextDir` | Converted | `spec.source.contextDir` | Nothing | none |
-| `source.images[]` with exactly one entry | Converted. The image reference is resolved through the mapping flags | `spec.source: {type: OCIArtifact, ociArtifact: {image, pullSecret}}` | See [Image references](#image-references) | W33 when it cannot be resolved |
+| `source.images[]` with exactly one entry | Converted. The image reference is resolved through the mapping flags | `spec.source: {type: OCIArtifact, ociArtifact: {image, pullSecret}}` | See [Image references](#image-references) | W31 when it cannot be resolved |
 | `source.images[].pullSecret` | Converted | `spec.source.ociArtifact.pullSecret` | Migrate the secret | none |
 | `source.type` | Ignored. The plugin looks at which of `git`, `binary`, `images` is set | | Nothing | none |
 
@@ -160,11 +170,11 @@ Applies to `dockerStrategy.volumes[]` and `sourceStrategy.volumes[]`.
 
 | Field | What happens | Where it lands | What you do by hand | Warning |
 |---|---|---|---|---|
-| `output.to` of kind `ImageStreamTag` with no matching `--imagestream-mapping` | Converted, with a warning. The image becomes `image-registry.openshift-image-registry.svc:5000/<ns>/<name>:<tag>`, then `--registry-mapping` is applied. A name without a tag gets `:latest` | `spec.output.image` | Pass `--imagestream-mapping <ns>/<name>:<tag>=<registry/image:tag>` if the fallback is wrong | W36 |
-| `output.to` of kind `ImageStreamTag` whose resolved image is not on the internal registry | Converted, with a warning. The ImageStream on the source cluster will no longer update | `spec.output.image` | Repoint any Deployment or DeploymentConfig that watched the ImageStream | W37 |
-| no `output.pushSecret` | Converted, with a warning | | Internal registry: give the BuildRun a ServiceAccount with push access. External registry: set `spec.output.pushSecret` to a registry credential | W38 for ImageStreamTag, W39 for anything else |
-| `output.imageLabels[]` with an empty name | Dropped | | Name it | W40 |
-| `output.imageLabels[]` with a duplicate name | Converted, with a warning. The last value wins | `spec.output.labels` | Remove the duplicate | W41 |
+| `output.to` of kind `ImageStreamTag` with no matching `--imagestream-mapping` | Converted, with a warning. The image becomes `image-registry.openshift-image-registry.svc:5000/<ns>/<name>:<tag>`, then `--registry-mapping` is applied. A name without a tag gets `:latest` | `spec.output.image` | Pass `--imagestream-mapping <ns>/<name>:<tag>=<registry/image:tag>` if the fallback is wrong | W34 |
+| `output.to` of kind `ImageStreamTag` whose resolved image is not on the internal registry | Converted, with a warning. The ImageStream on the source cluster will no longer update | `spec.output.image` | Repoint any Deployment or DeploymentConfig that watched the ImageStream | W35 |
+| no `output.pushSecret` | Converted, with a warning | | Internal registry: give the BuildRun a ServiceAccount with push access. External registry: set `spec.output.pushSecret` to a registry credential | W36 for ImageStreamTag, W37 for anything else |
+| `output.imageLabels[]` with an empty name | Dropped | | Name it | W38 |
+| `output.imageLabels[]` with a duplicate name | Converted, with a warning. The last value wins | `spec.output.labels` | Remove the duplicate | W39 |
 | `output.to` of kind `ImageStreamTag` with a matching `--imagestream-mapping` | Converted | `spec.output.image`, after `--registry-mapping` | Nothing | none |
 | `output.to` of any other kind, including `DockerImage` and `ImageStreamImage` | Converted. The name is copied as written. No mapping flag is applied and there is no warning | `spec.output.image` | Check the registry in the name is reachable from the target | none |
 | `output.pushSecret` | Converted | `spec.output.pushSecret` | Migrate the secret | none |
@@ -174,18 +184,18 @@ Applies to `dockerStrategy.volumes[]` and `sourceStrategy.volumes[]`.
 
 | Field | What happens | Where it lands | What you do by hand | Warning |
 |---|---|---|---|---|
-| `spec.resources` (requests or limits) | Converted, with a warning. The Build cannot hold resources, so a BuildRun template is generated instead | the annotation `buildconfig-to-shipwright/buildrun-template`, holding a BuildRun with `stepResources` for the strategy's steps and the ServiceAccount | Review the template, then apply it to start a build. With `--default-build-strategy` the step names are unknown and `stepResources` is left out | W50, or W49 with a custom strategy |
-| `spec.postCommit` (script, command or args) | Dropped | | Add a test step after the BuildRun in a Tekton Pipeline. It runs after the push, so it cannot block a bad image | W61, and W62 if both script and command are set |
-| `spec.runPolicy: Serial` (or unset) | Dropped. BuildRuns run concurrently | | Serialise runs in your pipeline if ordering matters | W45 |
-| `spec.runPolicy: SerialLatestOnly` | Dropped | | Serialise and cancel superseded runs in your pipeline | W46 |
-| `spec.runPolicy` unrecognised | Dropped | | Nothing | W47 |
+| `spec.resources` (requests or limits) | Converted, with a warning. The Build cannot hold resources, so a BuildRun template is generated instead | the annotation `buildconfig-to-shipwright/buildrun-template`, holding a BuildRun with `stepResources` for the strategy's steps and the ServiceAccount | Review the template, then apply it to start a build. With `--default-build-strategy` the step names are unknown and `stepResources` is left out | W48, or W47 with a custom strategy |
+| `spec.postCommit` (script, command or args) | Dropped | | Add a test step after the BuildRun in a Tekton Pipeline. It runs after the push, so it cannot block a bad image | W59, and W60 if both script and command are set |
+| `spec.runPolicy: Serial` (or unset) | Dropped. BuildRuns run concurrently | | Serialise runs in your pipeline if ordering matters | W43 |
+| `spec.runPolicy: SerialLatestOnly` | Dropped | | Serialise and cancel superseded runs in your pipeline | W44 |
+| `spec.runPolicy` unrecognised | Dropped | | Nothing | W45 |
 | `spec.runPolicy: Parallel` | Converted. Nothing to write, because this is already how BuildRuns behave | | Nothing | none |
-| `spec.completionDeadlineSeconds` of 0 or less | Dropped | | Fix the value | W42 |
-| `spec.completionDeadlineSeconds` larger than about 9.2 billion | Dropped | | Fix the value | W43 |
+| `spec.completionDeadlineSeconds` of 0 or less | Dropped | | Fix the value | W40 |
+| `spec.completionDeadlineSeconds` larger than about 9.2 billion | Dropped | | Fix the value | W41 |
 | `spec.completionDeadlineSeconds` | Converted | `spec.timeout` | Nothing | none |
-| `spec.nodeSelector` with any invalid key or value | Dropped whole. A partial selector would schedule the build somewhere you did not ask for | | Fix the selector | W44 |
+| `spec.nodeSelector` with any invalid key or value | Dropped whole. A partial selector would schedule the build somewhere you did not ask for | | Fix the selector | W42 |
 | `spec.nodeSelector` | Converted | `spec.nodeSelector` | Nothing | none |
-| `spec.successfulBuildsHistoryLimit`, `spec.failedBuildsHistoryLimit` outside 1 to 10000, including 0 | Dropped. BuildRuns for that state are not pruned | | Set a value in range | W48 |
+| `spec.successfulBuildsHistoryLimit`, `spec.failedBuildsHistoryLimit` outside 1 to 10000, including 0 | Dropped. BuildRuns for that state are not pruned | | Set a value in range | W46 |
 | `spec.successfulBuildsHistoryLimit`, `spec.failedBuildsHistoryLimit` | Converted | `spec.retention.succeededLimit`, `spec.retention.failedLimit` | Nothing | none |
 
 ### Triggers
@@ -199,16 +209,16 @@ work in progress and the Builds for OpenShift operator does not ship it. Nothing
 
 | Field | What happens | Where it lands | What you do by hand | Warning |
 |---|---|---|---|---|
-| `triggers[]` of type `GitHub`, `GitLab`, `Bitbucket` | Dropped | | Remove or repoint the webhook in your Git provider, then use Pipelines-as-Code or Tekton Triggers to create BuildRuns | W52 |
-| `triggers[]` of type `Generic` | Dropped | | Same. `allowEnv` has no equivalent | W53 |
-| `triggers[]` of type `ImageChange` | Dropped | | Start builds from your own automation when the image changes | W54 |
-| `triggers[]` of type `ConfigChange` | Dropped | | Create the first BuildRun yourself. If the Build carries a BuildRun template, apply that | W56 (W55 is not reachable today, see the note below) |
-| `triggers[]` of any other type | Dropped | | | W57 |
-| any triggers at all | One summary warning, and the triggers are preserved | the annotation `buildconfig-to-shipwright/original-triggers`: type, secret reference name, `allowEnv`, `imageChange.from`, `paused`. Inline secret values and `lastTriggeredImageID` are never included | Keep the annotation until triggers exist in Shipwright | W58, and W51 if the list cannot be encoded |
+| `triggers[]` of type `GitHub`, `GitLab`, `Bitbucket` | Dropped | | Remove or repoint the webhook in your Git provider, then use Pipelines-as-Code or Tekton Triggers to create BuildRuns | W50 |
+| `triggers[]` of type `Generic` | Dropped | | Same. `allowEnv` has no equivalent | W51 |
+| `triggers[]` of type `ImageChange` | Dropped | | Start builds from your own automation when the image changes | W52 |
+| `triggers[]` of type `ConfigChange` | Dropped | | Create the first BuildRun yourself. If the Build carries a BuildRun template, apply that | W54 (W53 is not reachable today, see the note below) |
+| `triggers[]` of any other type | Dropped | | | W55 |
+| any triggers at all | One summary warning, and the triggers are preserved | the annotation `buildconfig-to-shipwright/original-triggers`: type, secret reference name, `allowEnv`, `imageChange.from`, `paused`. Inline secret values and `lastTriggeredImageID` are never included | Keep the annotation until triggers exist in Shipwright | W56, and W49 if the list cannot be encoded |
 
 Note: the plugin has two wordings for the ConfigChange warning. The one that mentions the BuildRun
-template (W55) is never used today, because triggers are processed one step before the template
-is written. You always get W56, even when the Build carries a template.
+template (W53) is never used today, because triggers are processed one step before the template
+is written. You always get W54, even when the Build carries a template.
 
 ### Fields the plugin never reads
 
@@ -259,7 +269,7 @@ the output image a name without a tag is looked up with `:latest` appended.
 |---|---|---|
 | `--imagestream-mapping` | `ns/name:tag=registry/image:tag,…` | Replaces ImageStream references, and bare DockerImage names, with a concrete image |
 | `--registry-mapping` | `old-registry=new-registry,…` | Rewrites the registry prefix of every resolved image reference, except an output image whose kind is not `ImageStreamTag`, which is copied as written (see [Output](#output)). The longest matching prefix wins |
-| `--default-build-strategy` | `docker=name,s2i=name` | Uses a different ClusterBuildStrategy name. With a custom name the BuildRun template omits `stepResources` (W49) |
+| `--default-build-strategy` | `docker=name,s2i=name` | Uses a different ClusterBuildStrategy name. With a custom name the BuildRun template omits `stepResources` (W47) |
 | `--search-registries` | `registry,…` | `spec.paramValues[registries-search]` |
 | `--insecure-registries` | `registry,…` | Keyed on the strategy name written to the Build, not on the BuildConfig's strategy type. `source-to-image`: `spec.output.insecure: true` when the output image is on one of them. Any other name, including a `--default-build-strategy` override for S2I: `spec.paramValues[registries-insecure]` |
 | `--block-registries` | `registry,…` | `spec.paramValues[registries-block]` |
@@ -336,48 +346,46 @@ converter, so neither can fire from the plugin today (see [Metadata](#metadata))
 | W18 | `Build arg … uses fieldRef/resourceFieldRef which has no Shipwright equivalent. This build arg was skipped — set it manually in the generated Build (BuildConfig …).` |
 | W19 | `Build arg … has an empty or unsupported valueFrom source. This build arg was skipped — set it manually in the generated Build (BuildConfig …).` |
 | W20 | `ImageStream reference … in namespace … could not be resolved — no --imagestream-mapping provided. Using fallback: …. Provide --imagestream-mapping to set the correct image reference.` |
-| W21 | `Custom scripts are not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: …` |
-| W22 | `Incremental build is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: …` |
-| W23 | `ForcePull flag is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: …` |
-| W24 | `Skipping volume with empty name for BuildConfig …: the Shipwright Build API requires volumes to be named` |
-| W25 | `Skipping duplicate volume … for BuildConfig …: a volume with this name was already converted` |
-| W26 | `Skipping volume … for BuildConfig …: …` where the reason is `unsupported volume source type …; supported types are Secret and ConfigMap`, `secret volume source is nil` or `configMap volume source is nil` |
-| W27 | `Volume … was converted, but the Build will fail validation (reason: UndefinedVolume) until you: (1) add an overridable volume named '…' to your ClusterBuildStrategy copy — volumes: [{name: …, overridable: true, emptyDir: {}}] (placeholder source; the converted Build's override supplies the real Secret/ConfigMap), (2) add a volumeMount for '…' on the strategy build step (…), (3) point the Build at the strategy copy via spec.strategy.name. See ….` |
-| W28 | `Volumes were converted to Build spec volumes, but the shipped … ClusterBuildStrategy does not declare them: Shipwright will reject the Build (Registered=False, reason: UndefinedVolume) until a matching volume with 'overridable: true' is added to a copy of the strategy. See ….` |
-| W29 | `BuildConfig …/… sets sourceSecret … but has no git source; sourceSecret only authenticates git clones and was not migrated.` |
-| W30 | `No source type specified for BuildConfig: …` |
-| W31 | `Image source 'As' field is not supported in Shipwright. BuildConfig: …` |
-| W32 | `Image source 'Paths' field is not supported in Shipwright. BuildConfig: …` |
-| W33 | W11 or W20, for the image source reference |
-| W34 | `BuildConfig '…' mounts ConfigMap '…' to '…' during build. Shipwright uses BuildVolume to mount ConfigMaps, which requires the ClusterBuildStrategy to define an overridable volume. To migrate: (1) add an overridable volume named '…' in the ClusterBuildStrategy, (2) add a BuildVolume override in the Build spec referencing the ConfigMap, (3) update your Dockerfile to use 'RUN cp' instead of 'ADD/COPY' for ConfigMap files.` |
-| W35 | `BuildConfig '…' mounts secret '…' to '…' during build. Shipwright uses BuildVolume to mount secrets, which requires the ClusterBuildStrategy to define an overridable volume. To migrate: (1) add an overridable volume named '…' in the ClusterBuildStrategy, (2) add a BuildVolume override in the Build spec referencing the secret, (3) update your Dockerfile to use 'RUN cp' instead of 'ADD/COPY' for secret files.` |
-| W36 | `Output ImageStreamTag … resolved to fallback URL: …` |
-| W37 | `Output image for ImageStreamTag … was redirected off the internal registry to …; the ImageStream will no longer be updated, so any Deployment or DeploymentConfig watching it to roll out will stop firing.` |
-| W38 | `No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.` |
-| W39 | `No explicit pushSecret found for DockerImage output. Set spec.output.pushSecret to a registry credential secret, or ensure the BuildRun ServiceAccount carries credentials for the target registry; otherwise the push will fail.` |
-| W40 | `Skipping output imageLabel with empty name` |
-| W41 | `Duplicate output imageLabel …: overriding value … with …` |
-| W42 | `completionDeadlineSeconds … on BuildConfig … is not positive; leaving Build timeout unset` |
-| W43 | `completionDeadlineSeconds … on BuildConfig … exceeds the maximum representable timeout of … seconds; leaving Build timeout unset` |
-| W44 | `nodeSelector on BuildConfig …/… is invalid: …; dropping the whole nodeSelector — migrated builds will not be pinned to any node` where the reason is `key … is not a valid label key (…)` or `value … for key … is not a valid label value (…)` |
-| W45 | `BuildConfig … uses runPolicy …, which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag` |
-| W46 | `BuildConfig … uses runPolicy …, which is dropped: OpenShift queued its builds and cancelled superseded ones so that only the latest ran, but Shipwright BuildRuns run concurrently and are never auto-cancelled. Serialize the runs and cancel superseded ones in your CI/CD pipeline if you depend on this` |
-| W47 | `BuildConfig … uses unrecognized runPolicy …, which is dropped: Shipwright has no build scheduling policy and BuildRuns run concurrently` |
-| W48 | `… … on BuildConfig …/… is outside the Shipwright … range […,…]; leaving retention unset — migrated BuildRuns will not be auto-pruned` |
-| W49 | `Build strategy … is a custom mapping with unknown step names — stepResources were omitted from the BuildRun template in annotation …. Add stepResources entries matching the strategy's step names to carry over the BuildConfig resource requirements (requests: …, limits: …).` |
-| W50 | `Resource requirements are not supported on Shipwright Build. Apply the BuildRun template from annotation … (after review) or set stepResources on each BuildRun you create.` |
-| W51 | `BuildConfig …: could not preserve original triggers in annotation …: …` |
-| W52 | `BuildConfig …: … webhook trigger is dropped — the old OpenShift webhook URL will stop working after migration, and Shipwright provides no replacement URL. Remove or repoint the webhook in your Git provider, then set up Pipelines-as-Code or Tekton Triggers to create BuildRuns on push events.` |
-| W53 | W52, followed by ` Note: webhook-injected environment variables (allowEnv) have no equivalent in Shipwright.` when `allowEnv` is set |
-| W54 | `BuildConfig …: ImageChange trigger is dropped — builds will no longer start when … changes. Shipwright has no equivalent of image change triggers today.` |
-| W55 | `BuildConfig …: ConfigChange trigger is dropped — the automatic first build will not happen. The generated Build carries a BuildRun template (annotation …); apply it once after review to start the first build.` |
-| W56 | `BuildConfig …: ConfigChange trigger is dropped — the automatic first build will not happen; create a BuildRun manually once to start the first build.` |
-| W57 | `BuildConfig …: unsupported trigger type … is dropped during migration.` |
-| W58 | `Found … trigger(s) (…) on BuildConfig … — none work in Shipwright today; builds must be started manually or by your own automation.` |
-| W59 | `Inline Dockerfile on BuildConfig …/… cannot be consumed by the buildah strategy; its content was preserved in ConfigMap …/… (key …). Commit it to the source repository as the Dockerfile, or see …, before running the Build.` |
-| W60 | `BuildConfig …/… has an inline Dockerfile set on a Source strategy. Inline Dockerfiles are not used by Source-to-Image and were not migrated. If this was intended for a Docker strategy build, reconfigure the BuildConfig strategy type.` |
-| W61 | `PostCommit hook (…) has no Shipwright equivalent and was dropped from BuildConfig '…'. In OpenShift this ran inside the built image before the push, and a failure failed the build. To replicate, add a test step after the BuildRun in a Tekton Pipeline — note this runs after the image is pushed, so it can no longer block a bad image from reaching the registry.` |
-| W62 | `BuildConfig '…' sets both script and command in spec.postCommit, which the BuildConfig API does not allow. The script form was assumed for the warning above.` |
+| W21 | `Incremental build enabled. The first BuildRun fails unless the output image already exists in the target registry, because s2i builds FROM it. Run the first BuildRun with paramValues incremental=false, or push the image once by hand.` |
+| W22 | `Skipping volume with empty name for BuildConfig …: the Shipwright Build API requires volumes to be named` |
+| W23 | `Skipping duplicate volume … for BuildConfig …: a volume with this name was already converted` |
+| W24 | `Skipping volume … for BuildConfig …: …` where the reason is `unsupported volume source type …; supported types are Secret and ConfigMap`, `secret volume source is nil` or `configMap volume source is nil` |
+| W25 | `Volume … was converted, but the Build will fail validation (reason: UndefinedVolume) until you: (1) add an overridable volume named '…' to your ClusterBuildStrategy copy — volumes: [{name: …, overridable: true, emptyDir: {}}] (placeholder source; the converted Build's override supplies the real Secret/ConfigMap), (2) add a volumeMount for '…' on the strategy build step (…), (3) point the Build at the strategy copy via spec.strategy.name. See ….` |
+| W26 | `Volumes were converted to Build spec volumes, but the shipped … ClusterBuildStrategy does not declare them: Shipwright will reject the Build (Registered=False, reason: UndefinedVolume) until a matching volume with 'overridable: true' is added to a copy of the strategy. See ….` |
+| W27 | `BuildConfig …/… sets sourceSecret … but has no git source; sourceSecret only authenticates git clones and was not migrated.` |
+| W28 | `No source type specified for BuildConfig: …` |
+| W29 | `Image source 'As' field is not supported in Shipwright. BuildConfig: …` |
+| W30 | `Image source 'Paths' field is not supported in Shipwright. BuildConfig: …` |
+| W31 | W11 or W20, for the image source reference |
+| W32 | `BuildConfig '…' mounts ConfigMap '…' to '…' during build. Shipwright uses BuildVolume to mount ConfigMaps, which requires the ClusterBuildStrategy to define an overridable volume. To migrate: (1) add an overridable volume named '…' in the ClusterBuildStrategy, (2) add a BuildVolume override in the Build spec referencing the ConfigMap, (3) update your Dockerfile to use 'RUN cp' instead of 'ADD/COPY' for ConfigMap files.` |
+| W33 | `BuildConfig '…' mounts secret '…' to '…' during build. Shipwright uses BuildVolume to mount secrets, which requires the ClusterBuildStrategy to define an overridable volume. To migrate: (1) add an overridable volume named '…' in the ClusterBuildStrategy, (2) add a BuildVolume override in the Build spec referencing the secret, (3) update your Dockerfile to use 'RUN cp' instead of 'ADD/COPY' for secret files.` |
+| W34 | `Output ImageStreamTag … resolved to fallback URL: …` |
+| W35 | `Output image for ImageStreamTag … was redirected off the internal registry to …; the ImageStream will no longer be updated, so any Deployment or DeploymentConfig watching it to roll out will stop firing.` |
+| W36 | `No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.` |
+| W37 | `No explicit pushSecret found for DockerImage output. Set spec.output.pushSecret to a registry credential secret, or ensure the BuildRun ServiceAccount carries credentials for the target registry; otherwise the push will fail.` |
+| W38 | `Skipping output imageLabel with empty name` |
+| W39 | `Duplicate output imageLabel …: overriding value … with …` |
+| W40 | `completionDeadlineSeconds … on BuildConfig … is not positive; leaving Build timeout unset` |
+| W41 | `completionDeadlineSeconds … on BuildConfig … exceeds the maximum representable timeout of … seconds; leaving Build timeout unset` |
+| W42 | `nodeSelector on BuildConfig …/… is invalid: …; dropping the whole nodeSelector — migrated builds will not be pinned to any node` where the reason is `key … is not a valid label key (…)` or `value … for key … is not a valid label value (…)` |
+| W43 | `BuildConfig … uses runPolicy …, which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag` |
+| W44 | `BuildConfig … uses runPolicy …, which is dropped: OpenShift queued its builds and cancelled superseded ones so that only the latest ran, but Shipwright BuildRuns run concurrently and are never auto-cancelled. Serialize the runs and cancel superseded ones in your CI/CD pipeline if you depend on this` |
+| W45 | `BuildConfig … uses unrecognized runPolicy …, which is dropped: Shipwright has no build scheduling policy and BuildRuns run concurrently` |
+| W46 | `… … on BuildConfig …/… is outside the Shipwright … range […,…]; leaving retention unset — migrated BuildRuns will not be auto-pruned` |
+| W47 | `Build strategy … is a custom mapping with unknown step names — stepResources were omitted from the BuildRun template in annotation …. Add stepResources entries matching the strategy's step names to carry over the BuildConfig resource requirements (requests: …, limits: …).` |
+| W48 | `Resource requirements are not supported on Shipwright Build. Apply the BuildRun template from annotation … (after review) or set stepResources on each BuildRun you create.` |
+| W49 | `BuildConfig …: could not preserve original triggers in annotation …: …` |
+| W50 | `BuildConfig …: … webhook trigger is dropped — the old OpenShift webhook URL will stop working after migration, and Shipwright provides no replacement URL. Remove or repoint the webhook in your Git provider, then set up Pipelines-as-Code or Tekton Triggers to create BuildRuns on push events.` |
+| W51 | W50, followed by ` Note: webhook-injected environment variables (allowEnv) have no equivalent in Shipwright.` when `allowEnv` is set |
+| W52 | `BuildConfig …: ImageChange trigger is dropped — builds will no longer start when … changes. Shipwright has no equivalent of image change triggers today.` |
+| W53 | `BuildConfig …: ConfigChange trigger is dropped — the automatic first build will not happen. The generated Build carries a BuildRun template (annotation …); apply it once after review to start the first build.` |
+| W54 | `BuildConfig …: ConfigChange trigger is dropped — the automatic first build will not happen; create a BuildRun manually once to start the first build.` |
+| W55 | `BuildConfig …: unsupported trigger type … is dropped during migration.` |
+| W56 | `Found … trigger(s) (…) on BuildConfig … — none work in Shipwright today; builds must be started manually or by your own automation.` |
+| W57 | `Inline Dockerfile on BuildConfig …/… cannot be consumed by the buildah strategy; its content was preserved in ConfigMap …/… (key …). Commit it to the source repository as the Dockerfile, or see …, before running the Build.` |
+| W58 | `BuildConfig …/… has an inline Dockerfile set on a Source strategy. Inline Dockerfiles are not used by Source-to-Image and were not migrated. If this was intended for a Docker strategy build, reconfigure the BuildConfig strategy type.` |
+| W59 | `PostCommit hook (…) has no Shipwright equivalent and was dropped from BuildConfig '…'. In OpenShift this ran inside the built image before the push, and a failure failed the build. To replicate, add a test step after the BuildRun in a Tekton Pipeline — note this runs after the image is pushed, so it can no longer block a bad image from reaching the registry.` |
+| W60 | `BuildConfig '…' sets both script and command in spec.postCommit, which the BuildConfig API does not allow. The script form was assumed for the warning above.` |
 
 ## Pending changes
 

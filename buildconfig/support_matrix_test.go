@@ -232,10 +232,13 @@ func collectWarningTemplates(p *parsedPackage) []string {
 
 // quotedWarnings returns the first backtick-quoted string of every row in
 // the doc's "Warning reference" table, keyed by its W-number. A row with no
-// quote is an error unless it is a known prose row, so a row that loses its
-// backticks cannot drop out of the check unnoticed. Every number from W1 to
-// the highest row must appear exactly once, so a deleted row, even a prose
-// one, or a duplicated number fails here instead of vanishing from the map.
+// quote is an error unless it is a prose row, one whose text starts by
+// pointing at other rows ("W11 or W20, ..."), so a row that loses its
+// backticks cannot drop out of the check unnoticed. Prose rows are recognised
+// by that shape rather than by number, so renumbering the table does not
+// touch this test. Every number from W1 to the highest row must appear
+// exactly once, so a deleted row, even a prose one, or a duplicated number
+// fails here instead of vanishing from the map.
 func quotedWarnings(t *testing.T, doc string) map[string]string {
 	t.Helper()
 	_, section, found := strings.Cut(doc, "## Warning reference")
@@ -247,7 +250,7 @@ func quotedWarnings(t *testing.T, doc string) map[string]string {
 	}
 	row := regexp.MustCompile("(?m)^\\| W(\\d+) \\| ([^\n]*)$")
 	quote := regexp.MustCompile("`([^`]+)`")
-	prose := map[string]bool{"W33": true}
+	prose := regexp.MustCompile(`^W\d+\b`)
 	out := map[string]string{}
 	rows := map[int]int{}
 	highest := 0
@@ -265,8 +268,8 @@ func quotedWarnings(t *testing.T, doc string) map[string]string {
 		switch {
 		case q != nil:
 			out[id] = q[1]
-		case !prose[id]:
-			t.Errorf("%s row %s quotes no warning and is not a known prose row", supportMatrixPath, id)
+		case !prose.MatchString(m[2]):
+			t.Errorf("%s row %s quotes no warning and is not a prose row pointing at other rows", supportMatrixPath, id)
 		}
 	}
 	if highest == 0 {

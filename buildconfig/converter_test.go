@@ -924,6 +924,143 @@ func TestConvertSourceStrategyWithS2IOverride(t *testing.T) {
 	}
 }
 
+// s2iFlagsRequest builds a Source strategy BuildConfig request whose
+// sourceStrategy carries the given extra fields, for the scripts, incremental
+// and forcePull mappings.
+func s2iFlagsRequest(extra map[string]interface{}) transform.PluginRequest {
+	sourceStrategy := map[string]interface{}{
+		"from": map[string]interface{}{
+			"kind": "DockerImage",
+			"name": "registry.redhat.io/ubi8/nodejs-16:latest",
+		},
+	}
+	for k, v := range extra {
+		sourceStrategy[k] = v
+	}
+	return transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "s2i-flags",
+				"namespace": "myns",
+			},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git":  map[string]interface{}{"uri": "https://example.com/repo.git"},
+				},
+				"strategy": map[string]interface{}{
+					"type":           "Source",
+					"sourceStrategy": sourceStrategy,
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{
+						"kind": "DockerImage",
+						"name": "quay.io/example/myapp:latest",
+					},
+				},
+			},
+		}},
+	}
+}
+
+// s2iParamValue returns the single value of the named param on the first
+// converted Build, or "" when the param is absent. The name is the wire
+// string the strategy declares, never a constant (ADR-0004).
+func s2iParamValue(t *testing.T, resp transform.PluginResponse, name string) string {
+	t.Helper()
+	pv, ok := paramValuesByName(decodeBuild(t, resp))[name]
+	if !ok || pv.SingleValue == nil || pv.SingleValue.Value == nil {
+		return ""
+	}
+	return *pv.SingleValue.Value
+}
+
+func TestConvertSourceStrategyScripts(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	resp, err := plugin.Run(s2iFlagsRequest(map[string]interface{}{
+		"scripts": "https://github.com/example/s2i-scripts",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := s2iParamValue(t, resp, "scripts-url"); got != "https://github.com/example/s2i-scripts" {
+		t.Errorf("scripts-url param = %q, want the BuildConfig scripts URL", got)
+	}
+}
+
+func TestConvertSourceStrategyIncremental(t *testing.T) {
+	logger, hook := logrustest.NewNullLogger()
+	plugin := &BuildConfigTransformPlugin{Log: logger}
+	resp, err := plugin.Run(s2iFlagsRequest(map[string]interface{}{
+		"incremental": true,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := s2iParamValue(t, resp, "incremental"); got != "true" {
+		t.Errorf("incremental param = %q, want \"true\"", got)
+	}
+
+	// The first-run warning reaches both the log and the annotation.
+	const want = "Incremental build enabled. The first BuildRun fails unless the output image already exists"
+	if len(logMessages(hook, logrus.WarnLevel, want)) != 1 {
+		t.Errorf("expected exactly one incremental first-run warning in the log, got %v", logMessages(hook, logrus.WarnLevel, want))
+	}
+	annotations := resp.NewResources[0].GetAnnotations()
+	if !strings.Contains(annotations[ConversionWarningsAnnotation], want) {
+		t.Errorf("expected the incremental first-run warning in %s, got %q", ConversionWarningsAnnotation, annotations[ConversionWarningsAnnotation])
+	}
+}
+
+func TestConvertSourceStrategyForcePull(t *testing.T) {
+	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
+	resp, err := plugin.Run(s2iFlagsRequest(map[string]interface{}{
+		"forcePull": true,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := s2iParamValue(t, resp, "pull-policy"); got != "always" {
+		t.Errorf("pull-policy param = %q, want \"always\"", got)
+	}
+}
+
+// TestConvertSourceStrategyFlagsUnset covers both ways a flag can be off: the
+// field omitted (incremental is a *bool, so this is the nil branch) and the
+// field set to its zero value. Neither emits a param or a warning; the
+// strategy defaults apply.
+func TestConvertSourceStrategyFlagsUnset(t *testing.T) {
+	cases := map[string]map[string]interface{}{
+		"omitted": {},
+		"zero values": {
+			"scripts":     "",
+			"incremental": false,
+			"forcePull":   false,
+		},
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			logger, hook := logrustest.NewNullLogger()
+			plugin := &BuildConfigTransformPlugin{Log: logger}
+			resp, err := plugin.Run(s2iFlagsRequest(extra))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			byName := paramValuesByName(decodeBuild(t, resp))
+			for _, param := range []string{"scripts-url", "incremental", "pull-policy"} {
+				if pv, present := byName[param]; present {
+					t.Errorf("param %s = %v, want it absent when the field is off", param, pv.SingleValue)
+				}
+			}
+			if msgs := logMessages(hook, logrus.WarnLevel, "Incremental build enabled"); len(msgs) != 0 {
+				t.Errorf("unexpected incremental warning for an S2I flag that is off: %v", msgs)
+			}
+		})
+	}
+}
+
 func TestConvertBinarySource(t *testing.T) {
 	plugin := &BuildConfigTransformPlugin{Log: logrus.New()}
 	request := transform.PluginRequest{
