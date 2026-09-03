@@ -1,0 +1,27 @@
+name: Documentation tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  documentation:
+    name: Documentation tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run documentation tests
+        env:
+          GOPROXY: "https://proxy.golang.org"
+          GOWORK: off
+        run: >-
+          go test -v -tags documentation ./buildconfig
+          -run '^(TestArchitectureDocNamesEveryFileAndStage|TestArchitectureDocSymbolsExist|TestInvariantsCiteRealTests|TestSupportMatrixCoversEveryWarning|TestReadmeOptionalFlagsAreValidJSON|TestReadmeVersionsMatchPins|TestExamplesMatchCommittedOutput|TestADRsAreWellFormed|TestNoDirectWarnLoggingInConverter|TestDirectWarnCallsCatchEveryShape)$'
