@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Reply inside a PR review thread. The body is read from a file and sent as JSON data,
+# never assembled into a shell string (comment text is untrusted).
+# Adapted from compound-engineering ce-resolve-pr-feedback (MIT, see ../NOTICE).
+#
+# usage: reply-to-thread [--print-payload] THREAD_ID BODY_FILE
+set -euo pipefail
+
+usage() { echo "usage: reply-to-thread [--print-payload] THREAD_ID BODY_FILE" >&2; exit 1; }
+PRINT_ONLY=0
+if [ "${1:-}" = "--print-payload" ]; then PRINT_ONLY=1; shift; fi
+[ $# -eq 2 ] || usage
+THREAD_ID=$1
+BODY_FILE=$2
+[ -s "$BODY_FILE" ] || { echo "error: body file missing or empty: $BODY_FILE" >&2; exit 1; }
+
+PAYLOAD=$(jq -n --arg tid "$THREAD_ID" --rawfile body "$BODY_FILE" '{
+  query: "mutation Reply($threadId: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) { comment { id url } } }",
+  variables: {threadId: $tid, body: $body}
+}')
+
+if [ "$PRINT_ONLY" -eq 1 ]; then
+  printf '%s\n' "$PAYLOAD"
+  exit 0
+fi
+
+printf '%s' "$PAYLOAD" | gh api graphql --input - --jq '.data.addPullRequestReviewThreadReply'

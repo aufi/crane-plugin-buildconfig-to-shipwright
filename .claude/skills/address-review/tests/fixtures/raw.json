@@ -1,0 +1,44 @@
+{
+  "threads": [
+    {"data": {"repository": {"pullRequest": {
+      "number": 66, "state": "OPEN", "title": "docs: worked example", "url": "https://github.com/migtools/x/pull/66",
+      "headRefOid": "deadbeef", "headRefName": "BUILD-2433-example", "author": {"login": "psrvere"},
+      "headRepositoryOwner": {"login": "psrvere"},
+      "reviewThreads": {"nodes": [
+        {"id": "T1", "isResolved": true, "isOutdated": false, "path": "a.md", "line": 1, "originalLine": 1, "startLine": null, "originalStartLine": null,
+         "comments": {"nodes": [{"id": "C-T1-1", "author": {"login": "coderabbitai"}, "body": "resolved already", "createdAt": "2026-09-01T00:00:00Z", "url": "u"}]}},
+        {"id": "T2", "isResolved": false, "isOutdated": false, "path": "a.md", "line": 5, "originalLine": 5, "startLine": null, "originalStartLine": null,
+         "comments": {"nodes": [{"id": "C-T2-1", "author": {"login": "aufi"}, "body": "This sentence is wrong.", "createdAt": "2026-09-01T00:00:00Z", "url": "u"}]}},
+        {"id": "T3", "isResolved": false, "isOutdated": true, "path": "b.md", "line": null, "originalLine": 9, "startLine": null, "originalStartLine": null,
+         "comments": {"nodes": [
+           {"id": "C-T3-1", "author": {"login": "coderabbitai"}, "body": "Missing nil check.", "createdAt": "2026-09-01T00:00:00Z", "url": "u"},
+           {"id": "C-T3-2", "author": {"login": "psrvere"}, "body": "Not changing: handled on line 12.\n\nCo-Authored-By: Claude\n<!-- address-review: answers T3 at deadbeef -->", "createdAt": "2026-09-02T00:00:00Z", "url": "u"}]}},
+        {"id": "T4", "isResolved": false, "isOutdated": false, "path": "c.md", "line": 3, "originalLine": 3, "startLine": null, "originalStartLine": null,
+         "comments": {"nodes": [
+           {"id": "C-T4-1", "author": {"login": "aufi"}, "body": "Please rename this.", "createdAt": "2026-09-01T00:00:00Z", "url": "u"},
+           {"id": "C-T4-2", "author": {"login": "psrvere"}, "body": "Renamed in abc123.\n\nCo-Authored-By: Claude\n<!-- address-review: answers T4 at 0000000 -->", "createdAt": "2026-09-02T00:00:00Z", "url": "u"},
+           {"id": "C-T4-3", "author": {"login": "aufi"}, "body": "Still wrong, see the second occurrence.", "createdAt": "2026-09-03T00:00:00Z", "url": "u"}]}},
+        {"id": "T5", "isResolved": false, "isOutdated": false, "path": "d.md", "line": 1, "originalLine": 1, "startLine": null, "originalStartLine": null,
+         "comments": {"nodes": []}},
+        {"id": "T6", "isResolved": false, "isOutdated": false, "path": "e.md", "line": 7, "originalLine": 7, "startLine": null, "originalStartLine": null,
+         "comments": {"nodes": [{"id": "C-T6-1", "author": {"login": "coderabbitai"}, "body": "_🟡 Minor_ **Prefer a named constant.**", "createdAt": "2026-09-01T00:00:00Z", "url": "u"}]}}
+      ], "pageInfo": {"hasNextPage": false, "endCursor": null}}}}}}
+  ],
+  "comments": [
+    {"data": {"repository": {"pullRequest": {"comments": {"nodes": [
+      {"id": "C1", "author": {"login": "coderabbitai"}, "body": "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n## Walkthrough", "createdAt": "2026-09-01T00:00:00Z", "url": "u"},
+      {"id": "C2", "author": {"login": "psrvere"}, "body": "> Correction to the text\n\nRead, folded in.\n\nCo-Authored-By: Claude\n<!-- address-review: answers R2 at deadbeef -->", "createdAt": "2026-09-02T00:00:00Z", "url": "u"},
+      {"id": "C3", "author": {"login": "aufi"}, "body": "I'm not sure how the comparison works here.", "createdAt": "2026-09-01T00:00:00Z", "url": "u"},
+      {"id": "C4", "author": {"login": "codecov"}, "body": "Coverage 81%", "createdAt": "2026-09-01T00:00:00Z", "url": "u"}
+    ], "pageInfo": {"hasNextPage": false, "endCursor": null}}}}}}
+  ],
+  "reviews": [
+    {"data": {"repository": {"pullRequest": {"reviews": {"nodes": [
+      {"id": "R1", "author": {"login": "aufi"}, "state": "CHANGES_REQUESTED", "body": "Request changes:\n\n1. The README says the plugin does not migrate the Secret.\n2. It instructs the user to create it.", "submittedAt": "2026-09-01T00:00:00Z", "url": "u"},
+      {"id": "R2", "author": {"login": "aufi"}, "state": "COMMENTED", "body": "Correction to the text of my preceding review.", "submittedAt": "2026-09-01T00:00:00Z", "url": "u"},
+      {"id": "R3", "author": {"login": "aufi"}, "state": "APPROVED", "body": "Approved.", "submittedAt": "2026-09-02T00:00:00Z", "url": "u"},
+      {"id": "R4", "author": {"login": "psrvere"}, "state": "COMMENTED", "body": "<!-- **Head SHA:** deadbeef -->\n## Review\nVerdict: request-changes\n- medium: docs/x.md:12 claim is wrong", "submittedAt": "2026-09-01T00:00:00Z", "url": "u"},
+      {"id": "R5", "author": {"login": "coderabbitai"}, "state": "COMMENTED", "body": "", "submittedAt": "2026-09-01T00:00:00Z", "url": "u"}
+    ], "pageInfo": {"hasNextPage": false, "endCursor": null}}}}}}
+  ]
+}
