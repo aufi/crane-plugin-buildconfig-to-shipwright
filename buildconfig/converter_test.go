@@ -1272,7 +1272,7 @@ func TestConvertImageSourceUnsupportedFields(t *testing.T) {
 		if strings.Contains(entry.Message, "Image source 'As' field is not supported") {
 			sawAs = true
 		}
-		if strings.Contains(entry.Message, "Image source 'Paths' field is not supported") {
+		if strings.Contains(entry.Message, "source.images copied 1 path(s) from registry.example.com/source:latest") {
 			sawPaths = true
 		}
 	}
@@ -1280,7 +1280,7 @@ func TestConvertImageSourceUnsupportedFields(t *testing.T) {
 		t.Error("expected a warning for the unsupported image source 'As' field")
 	}
 	if !sawPaths {
-		t.Error("expected a warning for the unsupported image source 'Paths' field")
+		t.Error("expected the source.images paths warning naming the resolved image")
 	}
 
 	// The unsupported sub-fields are dropped, not fatal: the BuildConfig is
