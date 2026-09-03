@@ -46,6 +46,13 @@ vol_count() {
     vol_block "$1" | grep -c '^    - '
 }
 
+# True when the Build carries a single-value param with this name and value. A
+# paramValues entry serializes as configMapValue, name, secretValue, value, so
+# the value sits up to two lines below the name.
+has_param() {
+    grep -A2 "name: $2" "$1" | grep -q "value: $3"
+}
+
 # --- Preflight: crane must be new enough to write plugin-generated resources ---
 # crane v0.0.5 and earlier have no --overwrite on apply and do not write a plugin's
 # NewResources. Against such a build every Shipwright Build assertion below fails, which
@@ -212,6 +219,16 @@ if [ -n "$S2I_BUILD" ]; then
         "  builder image resolved via imagestream-mapping"
     check 'grep -q "release-2.0" "$S2I_BUILD"' \
         "  git revision preserved"
+
+    # The three S2I strategy flags map to strategy params (BUILD-2459).
+    check 'has_param "$S2I_BUILD" scripts-url https://github.com/example/s2i-scripts' \
+        "  scripts mapped to scripts-url param"
+    check 'has_param "$S2I_BUILD" incremental "\"true\""' \
+        "  incremental mapped to incremental param"
+    check 'has_param "$S2I_BUILD" pull-policy always' \
+        "  forcePull mapped to pull-policy param"
+    check 'grep -q "Incremental build enabled" "$S2I_BUILD"' \
+        "  incremental first-run warning recorded"
 
     # Same contract on the Source strategy, with a ConfigMap-backed volume.
     check '[ "$(vol_count "$S2I_BUILD")" -eq 1 ]' \

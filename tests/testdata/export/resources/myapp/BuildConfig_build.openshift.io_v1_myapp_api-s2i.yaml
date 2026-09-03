@@ -19,6 +19,9 @@ spec:
         kind: ImageStreamTag
         name: nodejs:16-ubi8
         namespace: openshift
+      scripts: https://github.com/example/s2i-scripts
+      incremental: true
+      forcePull: true
       env:
         - name: NPM_MIRROR
           value: https://registry.npmjs.org
