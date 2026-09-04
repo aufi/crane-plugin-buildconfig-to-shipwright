@@ -27,6 +27,9 @@ const (
 	NoCacheParamName          = "no-cache"
 	SquashParamName           = "squash"
 	ForcePullParamName        = "pull"
+	S2IScriptsURLParamName    = "scripts-url"
+	S2IIncrementalParamName   = "incremental"
+	S2IPullPolicyParamName    = "pull-policy"
 	RuntimeStageFromParamName = "runtime-stage-from"
 	BuildArgsParamName        = "build-args"
 
@@ -59,10 +62,7 @@ const (
 	SecretsRFE    = "https://issues.redhat.com/browse/BUILD-1744"
 	// VolumeMigrationDoc is the runbook for making converted Build volumes
 	// pass Shipwright validation (repo-relative; upstream URL not assumed).
-	VolumeMigrationDoc  = "docs/volume-migration.md in the crane-plugin-buildconfig-to-shipwright repository"
-	CustomScriptsRFE    = "https://issues.redhat.com/browse/BUILD-1641"
-	IncrementalBuildRFE = "https://issues.redhat.com/browse/BUILD-1607"
-	ForcePullFlagS2iRFE = "https://issues.redhat.com/browse/BUILD-1606"
+	VolumeMigrationDoc = "docs/volume-migration.md in the crane-plugin-buildconfig-to-shipwright repository"
 )
 
 // The per-BuildConfig conversion outcome model (OutcomeState, Outcome, the
@@ -82,39 +82,19 @@ type Converter struct {
 	// surfaced on the Outcome. It accumulates across the Converter's lifetime;
 	// Convert slices out the per-BuildConfig warnings by index.
 	warnings []string
-
-	// assignedNames tracks generated names (keyed by kind/namespace/name) so
-	// that distinct originals resolving to the same sanitized name within a
-	// single converter lifetime are detected and disambiguated.
-	assignedNames map[string]string
 }
 
-// uniqueName sanitizes a generated resource name into a valid DNS-1123 label
-// and guards against two distinct original names resolving to the same final
-// name for the same kind and namespace.
-func (c *Converter) uniqueName(kind, namespace, original string) string {
+// uniqueName sanitizes a generated resource name into a valid DNS-1123 label.
+// A name the plugin had to rewrite carries a hash of the original, so two
+// rewritten originals stay apart. An already-valid name that happens to equal
+// another BuildConfig's rewritten name is not detected; see the Metadata row in
+// docs/support-matrix.md. No cross-BuildConfig check exists (ADR-0006).
+func (c *Converter) uniqueName(kind, original string) string {
 	name, changed := sanitizeDNS1123Label(original)
 	if changed {
 		c.warnf("Generated %s name %q is not a valid DNS-1123 label of at most %d characters — using %q instead", kind, original, maxGeneratedNameLength, name)
 	}
 
-	if c.assignedNames == nil {
-		c.assignedNames = map[string]string{}
-	}
-	key := kind + "/" + namespace + "/" + name
-	if owner, ok := c.assignedNames[key]; ok && owner != original {
-		name = withHashSuffix(name, original)
-		c.warnf("Generated %s name for %q collides with the name already generated for %q — using %q instead", kind, original, owner, name)
-		key = kind + "/" + namespace + "/" + name
-		if owner, ok := c.assignedNames[key]; ok && owner != original {
-			// A genuine error (resources may overwrite each other), so log it
-			// loudly — but still record it as a conversion warning so the
-			// outcome reflects it.
-			msg := fmt.Sprintf("Hash-suffixed %s name %q for %q still collides with the name already generated for %q — resources may overwrite each other", kind, name, original, owner)
-			c.Log.Error(c.recordWarning(msg))
-		}
-	}
-	c.assignedNames[key] = original
 	return name
 }
 
@@ -125,7 +105,7 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	defer func() { c.curNS, c.curName = "", "" }()
 	startWarnings := len(c.warnings)
 	b := &shipwrightv1beta1.Build{}
-	b.Name = c.uniqueName("Build", bc.Namespace, bc.Name)
+	b.Name = c.uniqueName("Build", bc.Name)
 	b.Kind = "Build"
 	b.APIVersion = "shipwright.io/v1beta1"
 	b.Namespace = bc.Namespace
@@ -224,6 +204,7 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	c.processBuildsHistoryLimits(bc, b)
 	c.addRegistries(b)
 	c.processTriggers(bc, b)
+	c.processChainCandidates(bc)
 
 	if err := c.processResources(bc, b, generatedSA); err != nil {
 		return nil, outcomeFailed(err.Error())
@@ -588,15 +569,34 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 		b.Spec.Env = append(b.Spec.Env, ss.Env...)
 	}
 
-	// Warnings for unsupported features
+	// Scripts → scripts-url param
 	if ss.Scripts != "" {
-		c.warnf("Custom scripts are not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", CustomScriptsRFE)
+		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+			Name:        S2IScriptsURLParamName,
+			SingleValue: &shipwrightv1beta1.SingleValue{Value: &ss.Scripts},
+		})
 	}
+
+	// Incremental → incremental param. s2i generates a Dockerfile that starts
+	// with "FROM <output image> as cached", so the first BuildRun on a target
+	// that does not hold the output image yet fails at buildah. OpenShift's
+	// in-process builder tolerated the missing image; the strategy does not.
 	if ss.Incremental != nil && *ss.Incremental {
-		c.warnf("Incremental build is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", IncrementalBuildRFE)
+		incrementalValue := "true"
+		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+			Name:        S2IIncrementalParamName,
+			SingleValue: &shipwrightv1beta1.SingleValue{Value: &incrementalValue},
+		})
+		c.warnf("%s", "Incremental build enabled. The first BuildRun fails unless the output image already exists in the target registry, because s2i builds FROM it. Run the first BuildRun with paramValues incremental=false, or push the image once by hand.")
 	}
+
+	// ForcePull → pull-policy param
 	if ss.ForcePull {
-		c.warnf("ForcePull flag is not yet supported in the Source-to-Image ClusterBuildStrategy in Shipwright. RFE: %s", ForcePullFlagS2iRFE)
+		pullPolicyValue := "always"
+		b.Spec.ParamValues = append(b.Spec.ParamValues, shipwrightv1beta1.ParamValue{
+			Name:        S2IPullPolicyParamName,
+			SingleValue: &shipwrightv1beta1.SingleValue{Value: &pullPolicyValue},
+		})
 	}
 	// Volumes — converted to Build spec volumes under their original names.
 	// Shipwright rejects the Build (Registered=False, reason UndefinedVolume)
@@ -714,7 +714,7 @@ func (c *Converter) generateServiceAccount(bc *buildv1.BuildConfig, pullSecret *
 	if pullSecret == nil {
 		return nil
 	}
-	saName := c.uniqueName("ServiceAccount", bc.Namespace, bc.Name)
+	saName := c.uniqueName("ServiceAccount", bc.Name)
 
 	return &corev1.ServiceAccount{
 		TypeMeta: metav1.TypeMeta{
@@ -775,7 +775,14 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 	}
 
 	if sourceCount > 1 {
-		return fmt.Errorf("multiple source types are not supported in a single build in Shipwright (BuildConfig %s)", bc.Name)
+		msg := fmt.Sprintf("multiple source types are not supported in a single build in Shipwright (BuildConfig %s)", bc.Name)
+		if len(images) > 0 {
+			// A git source plus source.images is OpenShift's chained-build
+			// pattern; splitting the BuildConfig does not reproduce it
+			// (BUILD-2326).
+			msg += "; source.images alongside another source was OpenShift's chained-build pattern, which Shipwright expresses as a multi-stage Dockerfile: COPY --from=<image> the files you need and remove source.images"
+		}
+		return fmt.Errorf("%s", msg)
 	}
 
 	if sourceCount == 0 {
@@ -818,14 +825,14 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 		b.Spec.Source = source
 	} else if len(images) > 0 {
 		if len(images) > 1 {
-			return fmt.Errorf("multiple image sources are not supported in Shipwright (BuildConfig %s)", bc.Name)
+			// Several source.images entries is the artifact chain with more
+			// than one producer; the same multi-stage rewrite covers it, one
+			// COPY --from per image (BUILD-2326).
+			return fmt.Errorf("multiple image sources are not supported in Shipwright (BuildConfig %s); source.images was OpenShift's chained-build pattern, which Shipwright expresses as a multi-stage Dockerfile: COPY --from=<image> the files you need from each and remove source.images", bc.Name)
 		}
 		image := images[0]
 		if image.As != nil {
 			c.warnf("Image source 'As' field is not supported in Shipwright. BuildConfig: %s", bc.Name)
-		}
-		if image.Paths != nil {
-			c.warnf("Image source 'Paths' field is not supported in Shipwright. BuildConfig: %s", bc.Name)
 		}
 
 		namespace := image.From.Namespace
@@ -838,6 +845,20 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 		}
 		if warning != "" {
 			c.warnf("%s", warning)
+		}
+		if len(image.Paths) > 0 {
+			// Shipwright's OCI artifact source unpacks the image's flattened
+			// filesystem at the context root (shipwright/build
+			// pkg/bundle/bundle.go, mutate.Extract), so the selected paths do
+			// not land where the Dockerfile's COPY expects them. Name the
+			// resolved image so the multi-stage rewrite can be copied out of
+			// the warning (BUILD-2326).
+			msg := fmt.Sprintf("BuildConfig %s: source.images copied %d path(s) from %s into the build context on OpenShift. Shipwright's OCI artifact source unpacks the whole image filesystem at the context root and has no paths, so COPY instructions that expect those files under their destinationDir will not find them. Rewrite the Dockerfile as a multi-stage build (COPY --from=%s <sourcePath> <destination>) and remove source.images. Keep that Dockerfile in the git repository the Build clones (spec.source.git); a Build with neither git nor source.images has no source.",
+				bc.Name, len(image.Paths), imageRef, imageRef)
+			if chainCandidate(string(image.From.Kind), namespace, bc.Namespace) {
+				msg += fmt.Sprintf(chainRunOrderSentence, bc.Namespace)
+			}
+			c.warnf("%s", msg)
 		}
 
 		source := &shipwrightv1beta1.Source{

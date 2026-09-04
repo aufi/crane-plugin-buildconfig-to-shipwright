@@ -95,8 +95,15 @@ steps table in the architecture page if the pipeline order changed, and add a re
 ## Files you may own fully
 
 `main.go`, `tests/testdata/export/*`, `buildconfig/names.go`, `buildconfig/postcommit.go`,
-and `processRunPolicy`, the one conversion step that writes nothing to the Build. Propose
-and ship; the maintainer reads the result, not the diff.
+and two more conversion steps that write nothing to the Build, `processRunPolicy` and
+`processChainCandidates` with its `chainInputs`. Propose and ship; the maintainer reads the
+result, not the diff.
+
+Not the rest of `buildconfig/chain.go`. `chainRunOrderSentence` and `chainCandidate` live
+there but `processTriggers` and `processSource` use them to build warnings, so their text
+reaches the `conversion-warnings` annotation on the Build, and both of those callers are
+read line by line. The architecture page's file table says the same thing: `chain.go` is
+"read every changed line".
 
 Nothing else. In particular this list does not cover `hack/*` or `buildconfig/*_test.go`,
 because CI executes both: `.github/workflows/test-e2e-minikube-pr.yml` runs the `hack/`
@@ -138,7 +145,7 @@ not exist on `main` yet. They are listed here so the table is complete when thos
 
 | Test | Guards | Fix |
 |---|---|---|
-| `TestSupportMatrixCoversEveryWarning` | every warning template has a row in the matrix, and every quoted warning still exists | add or reword the row in `docs/support-matrix.md` |
+| `TestSupportMatrixCoversEveryWarning` | every warning template has a row in the matrix, and every quoted warning still exists | add or reword the row in `docs/support-matrix.md`. To retire a warning, keep its row and start the cell with `Retired by BUILD-` and the story number. Put no backticks anywhere in that cell: a backtick-quoted string is read as a live warning template, and the row then fails the doc-to-code check instead |
 | `TestArchitectureDocNamesEveryFileAndStage` | every non-test Go file and every `process*` method is named in the architecture page | add the line |
 | `TestInvariantsCiteRealTests` | every test the architecture page cites exists | rename it in the page, or restore the test |
 | `TestExamplesMatchCommittedOutput` | each `docs/examples/*/expected/` matches the plugin's output | `go test -tags documentation ./buildconfig -run TestExamplesMatchCommittedOutput -update` (once #66 to #68 land; the flag does not exist before that), then re-read that example's README. A regenerated expectation is a changed assertion, so it is read line by line like any other golden file |

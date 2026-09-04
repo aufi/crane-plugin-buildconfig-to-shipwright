@@ -232,12 +232,35 @@ func collectWarningTemplates(p *parsedPackage) []string {
 	return out
 }
 
+// wantProseRows is how many rows of the "Warning reference" table quote no
+// warning of their own and point at other rows instead. Exactly one does
+// today, W31. Adding a second is a deliberate act, so this number moves with
+// it rather than the test quietly accepting more.
+const wantProseRows = 1
+
 // quotedWarnings returns the first backtick-quoted string of every row in
 // the doc's "Warning reference" table, keyed by its W-number. A row with no
-// quote is an error unless it is a known prose row, so a row that loses its
-// backticks cannot drop out of the check unnoticed. Every number from W1 to
-// the highest row must appear exactly once, so a deleted row, even a prose
-// one, or a duplicated number fails here instead of vanishing from the map.
+// quote is an error unless it is a prose row, one whose text is a list of
+// other W-numbers followed by a comma ("W11 or W20, for the ..."), or a
+// retired row, one whose text reads "Retired by BUILD-<n>", so a row that
+// loses its backticks cannot drop out of the check unnoticed. Both are
+// recognised by that shape rather than by number, so renumbering the table
+// does not touch this test, and retiring a warning is a doc-only edit.
+//
+// The shape alone is a weak guard, because a warning row reworded into a
+// cross-reference ("W7, for the Custom strategy") has the same shape as a
+// real prose row. Their count is what stops that: turning a quoted row into a
+// prose one takes the total to two and fails here. So the shape says what a
+// prose row looks like and wantProseRows says how many may exist, and a row
+// only leaves the doc-to-code check when someone moves that number.
+//
+// A retired row needs no such count. Its text names the story that retired
+// the warning, which a reworded warning row would not carry, and it stays in
+// the table only to keep the numbers contiguous.
+//
+// Every number from W1 to the highest row must appear exactly once, so a
+// deleted row, even a prose or retired one, or a duplicated number fails here
+// instead of vanishing from the map.
 func quotedWarnings(t *testing.T, doc string) map[string]string {
 	t.Helper()
 	_, section, found := strings.Cut(doc, "## Warning reference")
@@ -249,10 +272,12 @@ func quotedWarnings(t *testing.T, doc string) map[string]string {
 	}
 	row := regexp.MustCompile("(?m)^\\| W(\\d+) \\| ([^\n]*)$")
 	quote := regexp.MustCompile("`([^`]+)`")
-	prose := map[string]bool{"W33": true}
+	prose := regexp.MustCompile(`^W\d+( (or|to|and) W\d+)*, `)
+	retired := regexp.MustCompile(`^Retired by BUILD-[0-9]+\b`)
 	out := map[string]string{}
 	rows := map[int]int{}
 	highest := 0
+	proseRows := 0
 	for _, m := range row.FindAllStringSubmatch(section, -1) {
 		n, err := strconv.Atoi(m[1])
 		if err != nil {
@@ -267,8 +292,10 @@ func quotedWarnings(t *testing.T, doc string) map[string]string {
 		switch {
 		case q != nil:
 			out[id] = q[1]
-		case !prose[id]:
-			t.Errorf("%s row %s quotes no warning and is not a known prose row", supportMatrixPath, id)
+		case prose.MatchString(m[2]):
+			proseRows++
+		case !retired.MatchString(m[2]):
+			t.Errorf("%s row %s quotes no warning and is neither a prose row pointing at other rows nor a retired one", supportMatrixPath, id)
 		}
 	}
 	if highest == 0 {
@@ -278,6 +305,9 @@ func quotedWarnings(t *testing.T, doc string) map[string]string {
 		if rows[n] != 1 {
 			t.Errorf("%s has %d rows for W%d in the warning reference; want exactly one", supportMatrixPath, rows[n], n)
 		}
+	}
+	if proseRows != wantProseRows {
+		t.Errorf("%s has %d prose rows in the warning reference; want %d. A row that quotes no warning is exempt from the doc-to-code check, so add one only on purpose and move wantProseRows with it", supportMatrixPath, proseRows, wantProseRows)
 	}
 	return out
 }

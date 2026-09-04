@@ -21,9 +21,10 @@ unit tests. Drift is caught by applying a converted Build to a real cluster and 
 Shipwright registers it. A new parameter lands in the strategy catalog first and the converter
 second, because the operator does not accept hand-edited strategies.
 
-Verified 2026-09-02: every parameter the plugin emits is declared by the shipped strategy it
+Verified 2026-09-03: every parameter the plugin emits is declared by the shipped strategy it
 targets. buildah: build-args, dockerfile, no-cache, pull, runtime-stage-from, squash, and the
-three registries lists. source-to-image: builder-image and the registries lists. The step
+three registries lists. source-to-image: builder-image, scripts-url, incremental, pull-policy
+and the registries lists. The step
 names in the BuildRun template, build-and-push for buildah and s2i-generate plus buildah for
 source-to-image, match too.
 
